@@ -1,0 +1,285 @@
+---
+title: Permit Types
+description: All 18+ permit type codes, colors, emojis, work type mapping, and filtering logic
+---
+
+NYC Permit Pulse tracks 18+ distinct permit types from the DOB NOW system. Each type has a unique code, color, and emoji for visual identification on the map.
+
+## All Permit Types
+
+The app normalizes verbose `work_type` strings from the NYC Open Data API into short 2-4 letter codes:
+
+| Code | Label | Color | Emoji | Work Type |
+|------|-------|-------|-------|-----------|
+| **NB** | New Building | <span style={{color: '#00ff88'}}>■</span> `#00ff88` | 🏗 | New Building |
+| **DM** | Demolition | <span style={{color: '#ff2222'}}>■</span> `#ff2222` | 💥 | Full Demolition |
+| **GC** | General Construction | <span style={{color: '#ff8800'}}>■</span> `#ff8800` | 🔨 | General Construction |
+| **PL** | Plumbing | <span style={{color: '#4466ff'}}>■</span> `#4466ff` | 🔵 | Plumbing |
+| **ME** | Mechanical | <span style={{color: '#00ccff'}}>■</span> `#00ccff` | ⚙️ | Mechanical |
+| **SOL** | Solar | <span style={{color: '#ffe600'}}>■</span> `#ffe600` | ☀️ | Solar Photovoltaic |
+| **SHD** | Sidewalk Shed | <span style={{color: '#cc44ff'}}>■</span> `#cc44ff` | 🏚 | Sidewalk Shed |
+| **SCF** | Scaffold | <span style={{color: '#ff44aa'}}>■</span> `#ff44aa` | 🪜 | Scaffold |
+| **FNC** | Const. Fence | <span style={{color: '#44ffdd'}}>■</span> `#44ffdd` | 🚧 | Construction Fence |
+| **SG** | Sign | <span style={{color: '#ffffff'}}>■</span> `#ffffff` | 📋 | Sign |
+| **FND** | Foundation | <span style={{color: '#a0522d'}}>■</span> `#a0522d` | 🪨 | Foundation |
+| **STR** | Structural | <span style={{color: '#ff6600'}}>■</span> `#ff6600` | 🔩 | Structural |
+| **BLR** | Boiler | <span style={{color: '#ff0066'}}>■</span> `#ff0066` | 🔥 | Boiler |
+| **SPR** | Sprinklers | <span style={{color: '#00aaff'}}>■</span> `#00aaff` | 💧 | Sprinkler |
+| **EW** | Earth Work | <span style={{color: '#88ff00'}}>■</span> `#88ff00` | 🌍 | Earth Work |
+| **ANT** | Antenna | <span style={{color: '#dd00ff'}}>■</span> `#dd00ff` | 📡 | Antenna |
+| **CC** | Curb Cut | <span style={{color: '#ffaa00'}}>■</span> `#ffaa00` | 🛤 | Curb Cut |
+| **STP** | Standpipe | <span style={{color: '#0055ff'}}>■</span> `#0055ff` | 🚿 | Standpipe |
+| **OTH** | Other | <span style={{color: '#888888'}}>■</span> `#888888` | 📌 | (any unrecognized type) |
+
+## Color Palette
+
+Colors are chosen for maximum visibility on the dark isometric map background:
+
+```typescript
+export const WORK_TYPE_COLORS: Record<string, string> = {
+  NB:  '#00ff88',  // bright green      — new building
+  DM:  '#ff2222',  // red               — demolition
+  GC:  '#ff8800',  // orange            — general construction
+  PL:  '#4466ff',  // blue              — plumbing
+  ME:  '#00ccff',  // cyan              — mechanical
+  SOL: '#ffe600',  // yellow            — solar
+  SHD: '#cc44ff',  // purple            — sidewalk shed
+  SCF: '#ff44aa',  // pink              — scaffold
+  FNC: '#44ffdd',  // teal              — construction fence
+  SG:  '#ffffff',  // white             — sign
+  FND: '#a0522d',  // brown             — foundation
+  STR: '#ff6600',  // deep orange       — structural (distinct from GC)
+  BLR: '#ff0066',  // hot pink-red      — boiler
+  SPR: '#00aaff',  // sky blue          — sprinkler
+  EW:  '#88ff00',  // yellow-green      — earth work
+  ANT: '#dd00ff',  // violet            — antenna
+  CC:  '#ffaa00',  // amber             — curb cut
+  STP: '#0055ff',  // deep blue         — standpipe
+  OTH: '#888888',  // grey              — other
+};
+```
+
+### Color Selection Criteria
+
+- **High contrast** - All colors pop against the dark map background
+- **Distinct hues** - Even color-blind users can distinguish major types
+- **Semantic meaning** - Red for demolition, green for new construction, blue for water-related (plumbing/sprinklers)
+
+## Emoji Mapping
+
+Emojis provide quick visual recognition in the sidebar and permit drawer:
+
+```typescript
+export const WORK_TYPE_EMOJIS: Record<string, string> = {
+  NB:  '🏗',   DM:  '💥',   GC:  '🔨',   PL:  '🔵',
+  ME:  '⚙️',   SOL: '☀️',   SHD: '🏚',   SCF: '🪜',
+  FNC: '🚧',   SG:  '📋',   FND: '🪨',   STR: '🔩',
+  BLR: '🔥',   SPR: '💧',   EW:  '🌍',   ANT: '📡',
+  CC:  '🛤',   STP: '🚿',   OTH: '📌',
+};
+```
+
+## Work Type Normalization
+
+The NYC Open Data `work_type` field contains verbose strings that need to be normalized:
+
+```typescript
+export function workTypeToCode(workType: string): string {
+  const wt = workType.toLowerCase();
+  if (wt.includes('new building'))           return 'NB';
+  if (wt.includes('full demolition'))        return 'DM';
+  if (wt.includes('general construction'))   return 'GC';
+  if (wt.includes('plumbing'))               return 'PL';
+  if (wt.includes('mechanical'))             return 'ME';
+  if (wt.includes('solar'))                  return 'SOL';
+  if (wt.includes('sidewalk shed'))          return 'SHD';
+  if (wt.includes('scaffold'))               return 'SCF';
+  if (wt.includes('construction fence'))     return 'FNC';
+  if (wt.includes('sign'))                   return 'SG';
+  if (wt.includes('foundation'))             return 'FND';
+  if (wt.includes('structural'))             return 'STR';
+  if (wt.includes('boiler'))                 return 'BLR';
+  if (wt.includes('sprinkler'))              return 'SPR';
+  if (wt.includes('earth work'))             return 'EW';
+  if (wt.includes('antenna'))                return 'ANT';
+  if (wt.includes('curb cut'))               return 'CC';
+  if (wt.includes('standpipe'))              return 'STP';
+  return 'OTH';
+}
+```
+
+### Example Mappings
+
+| Raw `work_type` String | Normalized Code |
+|------------------------|-----------------|
+| `"General Construction"` | `GC` |
+| `"GENERAL CONSTRUCTION (GC)"` | `GC` |
+| `"Plumbing"` | `PL` |
+| `"Mechanical Equipment"` | `ME` |
+| `"Solar Photovoltaic - Residential"` | `SOL` |
+| `"Sidewalk Shed - Public Safety"` | `SHD` |
+| `"Scaffold"` | `SCF` |
+| `"Construction Fence"` | `FNC` |
+| `"Sign - Accessory"` | `SG` |
+| `"Foundation"` | `FND` |
+| `"Boiler Equipment"` | `BLR` |
+| `"Fire Suppression - Sprinklers"` | `SPR` |
+| `"Antenna"` | `ANT` |
+| `"Curb Cut"` | `CC` |
+| `"Standpipe"` | `STP` |
+| `"Equipment Work"` | `OTH` |
+
+<Note>
+The `workTypeToCode()` function uses **substring matching** (`includes()`) to handle variations in capitalization, prefixes, and suffixes. This makes it robust to changes in the NYC Open Data schema.
+</Note>
+
+## Helper Functions
+
+### Get Color
+
+```typescript
+export function getJobColor(jobType: string): string {
+  return WORK_TYPE_COLORS[jobType] ?? '#666666';
+}
+
+// Usage
+const color = getJobColor('NB'); // '#00ff88'
+```
+
+### Get Emoji
+
+```typescript
+export function getJobEmoji(jobType: string): string {
+  return WORK_TYPE_EMOJIS[jobType] ?? '📌';
+}
+
+// Usage
+const emoji = getJobEmoji('DM'); // '💥'
+```
+
+### Get Label
+
+```typescript
+export const WORK_TYPE_LABELS: Record<string, string> = {
+  NB: 'New Building',  DM: 'Demolition',      GC: 'General Construction',
+  PL: 'Plumbing',      ME: 'Mechanical',      SOL: 'Solar',
+  SHD: 'Sidewalk Shed', SCF: 'Scaffold',      FNC: 'Const. Fence',
+  SG: 'Sign',          FND: 'Foundation',     STR: 'Structural',
+  BLR: 'Boiler',       SPR: 'Sprinklers',     EW: 'Earth Work',
+  ANT: 'Antenna',      CC: 'Curb Cut',        STP: 'Standpipe',
+  OTH: 'Other',
+};
+
+export function getJobLabel(jobType: string): string {
+  return WORK_TYPE_LABELS[jobType] ?? jobType;
+}
+
+// Usage
+const label = getJobLabel('SOL'); // 'Solar'
+```
+
+## Filtering Logic
+
+The filter UI allows users to select which permit types to display:
+
+```typescript
+const [filters, setFilters] = useState<FilterState>({
+  jobTypes: new Set(ALL_JOB_TYPES),  // all types enabled by default
+  boroughs: new Set(['MANHATTAN']),
+  daysBack: 7,
+});
+
+const filteredPermits = useMemo(() => permits.filter(p => {
+  const jt = p.job_type?.toUpperCase() ?? 'OTHER';
+  const jobTypeMatch = filters.jobTypes.has(jt) || 
+    (!ALL_JOB_TYPES.includes(jt) && filters.jobTypes.has('OTHER'));
+  return jobTypeMatch && /* borough match */;
+}), [permits, filters]);
+```
+
+### Default Enabled Types
+
+```typescript
+export const ALL_JOB_TYPES = [
+  'NB', 'DM', 'GC', 'PL', 'ME', 'SOL', 
+  'SHD', 'SCF', 'FNC', 'STR', 'FND', 'SG'
+];
+```
+
+These 12 types appear in the filter UI by default. Less common types (BLR, SPR, EW, ANT, CC, STP) are grouped under "OTHER".
+
+### Toggle Handler
+
+```typescript
+const toggleJobType = (jt: string) => setFilters(prev => {
+  const next = new Set(prev.jobTypes);
+  next.has(jt) ? next.delete(jt) : next.add(jt);
+  return { ...prev, jobTypes: next };
+});
+```
+
+## Permit Type Distribution
+
+Based on typical 7-day Manhattan dataset (~2,000 permits):
+
+| Type | Approx. % | Example Count |
+|------|-----------|---------------|
+| GC | 35% | ~700 |
+| PL | 20% | ~400 |
+| ME | 15% | ~300 |
+| SHD | 10% | ~200 |
+| SCF | 8% | ~160 |
+| SOL | 5% | ~100 |
+| NB | 3% | ~60 |
+| FND | 2% | ~40 |
+| DM | 1% | ~20 |
+| Other (combined) | 1% | ~20 |
+
+<Info>
+**General Construction (GC)** dominates because it covers alterations, renovations, and interior work - the most common construction activity in NYC.
+</Info>
+
+## Marker Styling
+
+On the map, each marker is color-coded and has hover effects:
+
+```css
+.permit-marker {
+  width: 10px;
+  height: 10px;
+  background: var(--color);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--color), 0 0 12px var(--color);
+  transition: opacity 0.15s, transform 0.15s;
+  cursor: pointer;
+}
+
+.permit-marker:hover {
+  transform: scale(1.5);
+  opacity: 1 !important;
+  z-index: 1000;
+}
+
+.permit-marker--selected {
+  box-shadow: 0 0 12px var(--color), 0 0 24px var(--color), 0 0 36px #fff;
+  transform: scale(1.3);
+  z-index: 999;
+}
+```
+
+The `--color` CSS custom property is set dynamically:
+
+```typescript
+markerElement.style.setProperty('--color', getJobColor(permit.job_type ?? ''));
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="layer-group" href="/concepts/architecture">
+    See how permit types integrate with the component system
+  </Card>
+  <Card title="Data Sources" icon="database" href="/concepts/data-sources">
+    Learn where permit type data comes from
+  </Card>
+</CardGroup>

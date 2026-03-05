@@ -1,80 +1,150 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get started with NYC Permit Pulse in 5 minutes
 ---
 
-## Get started in three steps
+NYC Permit Pulse is a live permit overlay for the isometric pixel-art map of New York City. View active DOB permits, filter by type and location, and explore the city's building activity in real-time.
 
-Get your documentation site running locally and make your first customization.
+![NYC Permit Pulse](https://raw.githubusercontent.com/ziggy2socks/isometric-permits/main/public/screenshot.jpg)
 
-### Step 1: Set up your local environment
+## View the Live Site
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+The easiest way to explore NYC Permit Pulse is to visit the live deployment:
 
-### Step 2: Deploy your changes
+<Card title="permitpulse.nyc" icon="map" href="https://permitpulse.nyc">
+  View live DOB permits overlaid on the isometric NYC map
+</Card>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+## What You'll See
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+When you open the site, you'll immediately see:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Interactive Map" icon="compass">
+    Deep-zoom isometric pixel art of NYC with permit markers
+  </Card>
+  <Card title="Color-Coded Permits" icon="palette">
+    Visual indicators by type: New Building, Demolition, General Construction, and more
+  </Card>
+  <Card title="Live Ticker" icon="signal-stream">
+    Recent permits cycling through — click to fly to location
+  </Card>
+  <Card title="Permit Details" icon="file-lines">
+    Address, description, contractor, owner, cost, and filing info
+  </Card>
 </CardGroup>
 
+## Core Features
+
+### 1. Explore the Map
+
+- **Pan & Zoom**: Click and drag to pan, scroll to zoom in/out
+- **Neighborhood Labels**: Labels adapt at three zoom levels (borough → major neighborhoods → all 197 NTAs)
+- **Click Markers**: Click any permit marker to view full details
+
+### 2. Filter Permits
+
+Use the sidebar controls to filter the view:
+
+- **Time Range**: 24h / 7d / 30d (most recent permits)
+- **Permit Type**: Filter by GC, PL, NB, DM, SOL, and more
+- **Borough**: Manhattan, Brooklyn, Queens, Bronx, Staten Island
+
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Data Freshness**: DOB NOW data lags approximately 24 hours. The "24h" filter queries 48 hours back to account for this.
 </Note>
+
+### 3. View Permit Details
+
+Click any marker to open the detail drawer showing:
+
+- Full address and neighborhood (NTA)
+- Permit type and job description
+- Contractor and owner information
+- Estimated cost (when available)
+- Filing and issuance dates
+- Job number and permit ID
+
+### 4. Breakdown Chart
+
+The sidebar chart shows the distribution of permit types for your current filter set, with the top 8 types by count.
+
+## Run Locally (Optional)
+
+If you want to run NYC Permit Pulse on your machine for development or testing:
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/yourusername/isometric-permits
+    cd isometric-permits
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    <CodeGroup>
+      ```bash npm
+      npm install
+      ```
+
+      ```bash yarn
+      yarn install
+      ```
+
+      ```bash pnpm
+      pnpm install
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Start the development server">
+    <CodeGroup>
+      ```bash npm
+      npm run dev
+      ```
+
+      ```bash yarn
+      yarn dev
+      ```
+
+      ```bash pnpm
+      pnpm dev
+      ```
+    </CodeGroup>
+
+    You should see output similar to:
+
+    ```
+    VITE v7.3.1  ready in 342 ms
+
+    ➜  Local:   http://localhost:5177/
+    ➜  Network: use --host to expose
+    ➜  press h + enter to show help
+    ```
+  </Step>
+
+  <Step title="Open in browser">
+    Navigate to `http://localhost:5177` to view the app.
+  </Step>
+</Steps>
+
+<Tip>
+  The development server runs on port **5177** (not the default 5173) as configured in `vite.config.ts`.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Full local development setup and configuration
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    How the map projection and data pipeline work
+  </Card>
+  <Card title="Data Sources" icon="database" href="/concepts/data-sources">
+    NYC Open Data APIs and Socrata endpoints
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/permits">
+    Core functions and TypeScript interfaces
+  </Card>
+</CardGroup>

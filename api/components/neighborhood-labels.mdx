@@ -1,0 +1,309 @@
+---
+title: NeighborhoodLabels
+description: LOD neighborhood labels overlay manager for OpenSeadragon
+---
+
+The `NeighborhoodLabels` class manages level-of-detail (LOD) neighborhood labels displayed on the OpenSeadragon map. It renders borough, major neighborhood, and NTA (Neighborhood Tabulation Area) labels based on the current zoom level.
+
+## Overview
+
+`NeighborhoodLabels` avoids OpenSeadragon's built-in overlay system (which wraps every element in a container and calls `drawHTML()` every frame). Instead, it uses a single absolutely-positioned container div and manually positions each label using `viewport.pixelFromPoint()` on the 'update-viewport' event.
+
+## Class Definition
+
+```typescript
+export class NeighborhoodLabels {
+  constructor(viewer: OpenSeadragon.Viewer)
+  setEnabled(val: boolean): void
+  destroy(): void
+}
+```
+
+## Constructor
+
+```typescript
+constructor(viewer: OpenSeadragon.Viewer)
+```
+
+Creates a new NeighborhoodLabels instance and attaches it to an OpenSeadragon viewer.
+
+<ParamField path="viewer" type="OpenSeadragon.Viewer" required>
+  The OpenSeadragon viewer instance to attach labels to
+</ParamField>
+
+**Initialization steps** (see `src/NeighborhoodLabels.ts:55-78`):
+
+1. Creates a container `<div>` with absolute positioning and `z-index: 80`
+2. Appends container to the viewer element
+3. Calls `buildLabels()` to create all label elements
+4. Registers event handlers:
+   - `update-viewport` → calls `draw()` to reposition labels
+   - `zoom` → calls `updateTier()` to show/hide labels based on zoom level
+   - `pan` → calls `draw()` to reposition labels
+5. Calls `updateTier()` to set initial visibility
+
+## Public Methods
+
+### setEnabled
+
+```typescript
+setEnabled(val: boolean): void
+```
+
+Enables or disables the neighborhood labels overlay.
+
+<ParamField path="val" type="boolean" required>
+  `true` to show labels, `false` to hide them
+</ParamField>
+
+When disabled, sets `container.style.display = 'none'`. When re-enabled, resets the current tier to force a refresh and calls `updateTier()`.
+
+See implementation at `src/NeighborhoodLabels.ts:80-84`.
+
+### destroy
+
+```typescript
+destroy(): void
+```
+
+Cleans up the NeighborhoodLabels instance:
+
+1. Cancels any active `requestAnimationFrame` callback (if `rafId` is set)
+2. Removes the container element from the DOM
+
+Call this method when unmounting the component or destroying the viewer.
+
+See implementation at `src/NeighborhoodLabels.ts:156-159`.
+
+## Private Methods
+
+<Warning>
+  These methods are internal implementation details and should not be called directly.
+</Warning>
+
+### buildLabels
+
+```typescript
+private buildLabels(): void
+```
+
+Builds all label elements and adds them to the container:
+
+1. **Borough labels** (5 total):
+   - MANHATTAN, BROOKLYN, QUEENS, BRONX, STATEN ISLAND
+   - Hardcoded centroids at `src/NeighborhoodLabels.ts:22-28`
+
+2. **NTA labels** (197 total):
+   - Loaded from `nta_centroids.json`
+   - Classified as 'major' (40 neighborhoods) or 'nta' (157 neighborhoods)
+   - Major NTA codes defined at `src/NeighborhoodLabels.ts:30-37`
+
+All labels start with `display: none` and are selectively shown by `updateTier()`.
+
+See implementation at `src/NeighborhoodLabels.ts:94-112`.
+
+### makeEl
+
+```typescript
+private makeEl(text: string, tier: 'borough' | 'major' | 'nta'): HTMLSpanElement
+```
+
+Creates a label `<span>` element with the appropriate CSS class:
+
+- Base class: `nta-label`
+- Tier-specific class: `nta-label--borough`, `nta-label--major`, or `nta-label--nta`
+
+See implementation at `src/NeighborhoodLabels.ts:114-119`.
+
+### toVp
+
+```typescript
+private toVp(lat: number, lng: number): { vpX: number; vpY: number }
+```
+
+Converts a geographic coordinate (latitude, longitude) to OpenSeadragon viewport coordinates:
+
+1. Calls `latlngToImagePx(lat, lng)` to get image pixel coordinates
+2. Divides by `IMAGE_DIMS.width` to normalize to viewport coordinates (0-1 range)
+
+See implementation at `src/NeighborhoodLabels.ts:86-92`.
+
+### updateTier
+
+```typescript
+private updateTier(): void
+```
+
+Updates label visibility based on the current zoom level:
+
+**Zoom tiers** (see `src/NeighborhoodLabels.ts:121-140`):
+
+<Tabs>
+  <Tab title="Tier 0: Boroughs">
+    **Zoom < 1.5**
+    
+    Shows only 5 borough labels (MANHATTAN, BROOKLYN, QUEENS, BRONX, STATEN ISLAND).
+  </Tab>
+  
+  <Tab title="Tier 1: Major Neighborhoods">
+    **Zoom 1.5 - 4**
+    
+    Shows borough labels + ~40 major neighborhood labels (e.g., Williamsburg, Astoria, Fort Greene).
+  </Tab>
+  
+  <Tab title="Tier 2: All NTAs">
+    **Zoom > 4**
+    
+    Shows all 197 NTA labels for maximum detail.
+  </Tab>
+</Tabs>
+
+**Logic:**
+
+1. Gets current zoom level from `viewer.viewport.getZoom()`
+2. Determines tier (0, 1, or 2) based on zoom thresholds
+3. Compares to `currentTier` — returns early if unchanged (optimization)
+4. Iterates through all labels and sets `display` style:
+   - Tier 0: show only `tier === 'borough'`
+   - Tier 1: show `tier === 'borough'` or `tier === 'major'`
+   - Tier 2: show all labels
+5. Calls `draw()` to reposition visible labels
+
+### draw
+
+```typescript
+private draw(): void
+```
+
+Repositions all visible labels to match the current viewport:
+
+1. Checks if labels are enabled (returns early if `!this.enabled`)
+2. Gets the current viewport from the viewer
+3. Iterates through all labels:
+   - Skips labels with `display: none`
+   - Converts viewport coordinates to screen pixels using `viewport.pixelFromPoint()`
+   - Sets `left` and `top` styles to position the label
+
+This method is called on every `update-viewport`, `zoom`, and `pan` event to keep labels synchronized with the map.
+
+See implementation at `src/NeighborhoodLabels.ts:142-154`.
+
+## Internal Data Structures
+
+### LabelEntry
+
+```typescript
+interface LabelEntry {
+  name: string;              // Display name (e.g., "Williamsburg")
+  vpX: number;               // OSD viewport X (0-1 range)
+  vpY: number;               // OSD viewport Y (0-1 range)
+  tier: 'borough' | 'major' | 'nta';  // Visibility tier
+  el: HTMLSpanElement;       // DOM element reference
+}
+```
+
+### Private Properties
+
+<ParamField path="viewer" type="OpenSeadragon.Viewer">
+  Reference to the OpenSeadragon viewer instance
+</ParamField>
+
+<ParamField path="container" type="HTMLDivElement">
+  Absolutely-positioned container div for all label elements
+</ParamField>
+
+<ParamField path="labels" type="LabelEntry[]">
+  Array of all label entries (boroughs + NTAs)
+</ParamField>
+
+<ParamField path="currentTier" type="0 | 1 | 2 | -1">
+  Current visibility tier (-1 = not initialized, 0 = boroughs, 1 = major, 2 = all)
+</ParamField>
+
+<ParamField path="enabled" type="boolean">
+  Whether labels are currently enabled (default: `true`)
+</ParamField>
+
+<ParamField path="rafId" type="number | null">
+  RequestAnimationFrame ID (reserved for future use, currently unused)
+</ParamField>
+
+## Usage Example
+
+```tsx
+import { NeighborhoodLabels } from './NeighborhoodLabels';
+import OpenSeadragon from 'openseadragon';
+
+// Initialize OpenSeadragon viewer
+const viewer = OpenSeadragon({
+  element: document.getElementById('map'),
+  // ... other config
+});
+
+// Create labels after viewer is ready
+viewer.addHandler('open', () => {
+  const labels = new NeighborhoodLabels(viewer);
+  
+  // Toggle labels on/off
+  labels.setEnabled(false);  // hide
+  labels.setEnabled(true);   // show
+});
+
+// Cleanup on unmount
+viewer.addHandler('close', () => {
+  labels.destroy();
+});
+```
+
+## CSS Styling
+
+The component expects the following CSS classes to be defined:
+
+```css
+.nta-label {
+  position: absolute;
+  pointer-events: none;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+}
+
+.nta-label--borough {
+  font-size: 16px;
+  color: #ffffff;
+  letter-spacing: 2px;
+}
+
+.nta-label--major {
+  font-size: 12px;
+  color: #e0e8ff;
+  letter-spacing: 1px;
+}
+
+.nta-label--nta {
+  font-size: 10px;
+  color: #b0c0dd;
+  letter-spacing: 0.5px;
+}
+```
+
+## Performance Considerations
+
+1. **Manual positioning**: Avoids OSD's overlay system which calls `drawHTML()` every frame and fights for element control
+2. **Tier change detection**: Uses `currentTier` tracking to avoid redundant show/hide operations
+3. **Display toggle optimization**: Sets `display: none` instead of removing elements from DOM
+4. **Pre-built labels**: Creates all 202 label elements once during initialization, then toggles visibility
+5. **Viewport caching**: Stores viewport coordinates (`vpX`, `vpY`) to avoid repeated lat/lng conversions
+
+## Data Sources
+
+- **Borough centroids**: Hardcoded in `src/NeighborhoodLabels.ts:22-28`
+- **NTA centroids**: Loaded from `src/nta_centroids.json` (197 neighborhoods)
+- **Major NTA codes**: Defined in `MAJOR_NTA_CODES` Set (40 neighborhoods)
+
+## See Also
+
+- [App Component](/api/components/app) - Main React component that uses NeighborhoodLabels
+- [Coordinate Utilities](/api/utilities/coordinates) - `latlngToImagePx()` coordinate conversion

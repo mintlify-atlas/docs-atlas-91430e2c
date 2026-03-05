@@ -1,0 +1,411 @@
+---
+title: 'permits.ts'
+description: 'Permit data fetching, normalization, and formatting utilities'
+icon: 'database'
+---
+
+The `permits.ts` module handles all permit data operations: fetching from NYC DOB NOW APIs, normalizing work types, and providing formatting utilities for display.
+
+## Functions
+
+### fetchPermits()
+
+Fetches permit data from both DOB NOW datasets (Approved Permits and Job Filings) for a specified date range.
+
+<ParamField path="daysBack" type="number" default="30">
+  Number of days of permit history to fetch. Supports ranges from 1 to 30 days.
+  - 1 day: ~400 permits, limit 1000
+  - 7 days: ~3,500 permits, limit 2000
+  - 30 days: ~12,000 permits, limit 5000 (most recent)
+</ParamField>
+
+<ResponseField name="Promise<Permit[]>" type="Permit[]">
+  Array of normalized permit objects from both datasets, with `job_type` codes applied.
+</ResponseField>
+
+```typescript
+export async function fetchPermits(daysBack: number = 30): Promise<Permit[]>
+```
+
+#### Implementation Details
+
+- Queries two Socrata datasets:
+  - `rbx6-tga4` (DOB NOW: Build – Approved Permits): Work-type permits (GC, PL, ME, Solar, Scaffold, etc.)
+  - `w9ak-ipjd` (DOB NOW: Build – Job Filings): Job-level filings (New Building, Full Demolition)
+- Uses actual latest dataset date (cached for 10 minutes) instead of assuming lag
+- Filters for permits with valid lat/lng coordinates
+- Normalizes both datasets into unified `Permit[]` array with `job_type` codes
+
+#### Example
+
+```typescript
+import { fetchPermits } from './permits';
+
+// Fetch last 7 days of permits
+const permits = await fetchPermits(7);
+console.log(`Loaded ${permits.length} permits`);
+
+// Fetch last 30 days (default)
+const allPermits = await fetchPermits();
+```
+
+---
+
+### workTypeToCode()
+
+Converts verbose DOB work type strings to normalized 2-4 letter codes.
+
+<ParamField path="workType" type="string" required>
+  Verbose work type from DOB dataset (e.g., "General Construction", "New Building")
+</ParamField>
+
+<ResponseField name="string" type="string">
+  Normalized code: `NB`, `DM`, `GC`, `PL`, `ME`, `SOL`, `SHD`, `SCF`, `FNC`, `SG`, `FND`, `STR`, `BLR`, `SPR`, `EW`, `ANT`, `CC`, `STP`, or `OTH`
+</ResponseField>
+
+```typescript
+export function workTypeToCode(workType: string): string
+```
+
+#### Supported Mappings
+
+| Work Type | Code | Label |
+|-----------|------|-------|
+| New Building | `NB` | New Building |
+| Full Demolition | `DM` | Demolition |
+| General Construction | `GC` | General Construction |
+| Plumbing | `PL` | Plumbing |
+| Mechanical | `ME` | Mechanical |
+| Solar | `SOL` | Solar |
+| Sidewalk Shed | `SHD` | Sidewalk Shed |
+| Scaffold | `SCF` | Scaffold |
+| Construction Fence | `FNC` | Const. Fence |
+| Sign | `SG` | Sign |
+| Foundation | `FND` | Foundation |
+| Structural | `STR` | Structural |
+| Boiler | `BLR` | Boiler |
+| Sprinkler | `SPR` | Sprinklers |
+| Earth Work | `EW` | Earth Work |
+| Antenna | `ANT` | Antenna |
+| Curb Cut | `CC` | Curb Cut |
+| Standpipe | `STP` | Standpipe |
+| Other | `OTH` | Other |
+
+#### Example
+
+```typescript
+import { workTypeToCode } from './permits';
+
+workTypeToCode('General Construction'); // 'GC'
+workTypeToCode('New Building');         // 'NB'
+workTypeToCode('Unknown Type');          // 'OTH'
+```
+
+---
+
+### getJobColor()
+
+Returns the hex color for a given job type code.
+
+<ParamField path="jobType" type="string" required>
+  Job type code (e.g., `NB`, `GC`, `PL`)
+</ParamField>
+
+<ResponseField name="string" type="string">
+  Hex color string (e.g., `#00ff88`, `#ff8800`). Returns `#666666` for unknown types.
+</ResponseField>
+
+```typescript
+export function getJobColor(jobType: string): string
+```
+
+#### Example
+
+```typescript
+import { getJobColor } from './permits';
+
+getJobColor('NB');   // '#00ff88' (bright green)
+getJobColor('DM');   // '#ff2222' (red)
+getJobColor('GC');   // '#ff8800' (orange)
+getJobColor('UNKNOWN'); // '#666666' (grey fallback)
+```
+
+---
+
+### getJobEmoji()
+
+Returns the emoji icon for a given job type code.
+
+<ParamField path="jobType" type="string" required>
+  Job type code (e.g., `NB`, `GC`, `PL`)
+</ParamField>
+
+<ResponseField name="string" type="string">
+  Emoji string. Returns `📌` for unknown types.
+</ResponseField>
+
+```typescript
+export function getJobEmoji(jobType: string): string
+```
+
+#### Example
+
+```typescript
+import { getJobEmoji } from './permits';
+
+getJobEmoji('NB');   // '🏗'
+getJobEmoji('DM');   // '💥'
+getJobEmoji('GC');   // '🔨'
+getJobEmoji('UNKNOWN'); // '📌' (fallback)
+```
+
+---
+
+### getJobLabel()
+
+Returns the human-readable label for a given job type code.
+
+<ParamField path="jobType" type="string" required>
+  Job type code (e.g., `NB`, `GC`, `PL`)
+</ParamField>
+
+<ResponseField name="string" type="string">
+  Human-readable label (e.g., "New Building", "General Construction"). Returns the input string for unknown types.
+</ResponseField>
+
+```typescript
+export function getJobLabel(jobType: string): string
+```
+
+#### Example
+
+```typescript
+import { getJobLabel } from './permits';
+
+getJobLabel('NB');   // 'New Building'
+getJobLabel('GC');   // 'General Construction'
+getJobLabel('PL');   // 'Plumbing'
+getJobLabel('UNKNOWN'); // 'UNKNOWN' (passthrough)
+```
+
+---
+
+### formatAddress()
+
+Formats a permit's address into a human-readable string.
+
+<ParamField path="permit" type="Permit" required>
+  Permit object with `house_no`, `street_name`, and `borough` fields
+</ParamField>
+
+<ResponseField name="string" type="string">
+  Formatted address string (e.g., "350 5th Ave MANHATTAN"). Returns "Unknown address" if all fields are empty.
+</ResponseField>
+
+```typescript
+export function formatAddress(permit: Permit): string
+```
+
+#### Example
+
+```typescript
+import { formatAddress } from './permits';
+
+const permit = {
+  house_no: '350',
+  street_name: '5th Ave',
+  borough: 'MANHATTAN',
+  // ... other fields
+};
+
+formatAddress(permit); // '350 5th Ave MANHATTAN'
+```
+
+---
+
+### formatDate()
+
+Formats an ISO date string into a human-readable format.
+
+<ParamField path="dateStr" type="string | undefined">
+  ISO date string (e.g., "2026-02-24T00:00:00.000")
+</ParamField>
+
+<ResponseField name="string" type="string">
+  Formatted date (e.g., "Feb 24, 2026"). Returns empty string if input is undefined or invalid.
+</ResponseField>
+
+```typescript
+export function formatDate(dateStr?: string): string
+```
+
+#### Example
+
+```typescript
+import { formatDate } from './permits';
+
+formatDate('2026-02-24T00:00:00.000'); // 'Feb 24, 2026'
+formatDate(undefined);                  // ''
+formatDate('invalid');                  // 'invalid' (passthrough on error)
+```
+
+---
+
+## Constants
+
+### WORK_TYPE_LABELS
+
+Mapping of job type codes to human-readable labels.
+
+```typescript
+export const WORK_TYPE_LABELS: Record<string, string> = {
+  NB:  'New Building',
+  DM:  'Demolition',
+  GC:  'General Construction',
+  PL:  'Plumbing',
+  ME:  'Mechanical',
+  SOL: 'Solar',
+  SHD: 'Sidewalk Shed',
+  SCF: 'Scaffold',
+  FNC: 'Const. Fence',
+  SG:  'Sign',
+  FND: 'Foundation',
+  STR: 'Structural',
+  BLR: 'Boiler',
+  SPR: 'Sprinklers',
+  EW:  'Earth Work',
+  ANT: 'Antenna',
+  CC:  'Curb Cut',
+  STP: 'Standpipe',
+  OTH: 'Other',
+};
+```
+
+---
+
+### WORK_TYPE_COLORS
+
+Mapping of job type codes to hex colors for visualization.
+
+```typescript
+export const WORK_TYPE_COLORS: Record<string, string> = {
+  NB:  '#00ff88',  // bright green      — new building
+  DM:  '#ff2222',  // red               — demolition
+  GC:  '#ff8800',  // orange            — general construction
+  PL:  '#4466ff',  // blue              — plumbing
+  ME:  '#00ccff',  // cyan              — mechanical
+  SOL: '#ffe600',  // yellow            — solar
+  SHD: '#cc44ff',  // purple            — sidewalk shed
+  SCF: '#ff44aa',  // pink              — scaffold
+  FNC: '#44ffdd',  // teal              — construction fence
+  SG:  '#ffffff',  // white             — sign
+  FND: '#a0522d',  // brown             — foundation
+  STR: '#ff6600',  // deep orange       — structural
+  BLR: '#ff0066',  // hot pink-red      — boiler
+  SPR: '#00aaff',  // sky blue          — sprinkler
+  EW:  '#88ff00',  // yellow-green      — earth work
+  ANT: '#dd00ff',  // violet            — antenna
+  CC:  '#ffaa00',  // amber             — curb cut
+  STP: '#0055ff',  // deep blue         — standpipe
+  OTH: '#888888',  // grey              — other
+};
+```
+
+---
+
+### WORK_TYPE_EMOJIS
+
+Mapping of job type codes to emoji icons.
+
+```typescript
+export const WORK_TYPE_EMOJIS: Record<string, string> = {
+  NB:  '🏗',
+  DM:  '💥',
+  GC:  '🔨',
+  PL:  '🔵',
+  ME:  '⚙️',
+  SOL: '☀️',
+  SHD: '🏚',
+  SCF: '🪜',
+  FNC: '🚧',
+  SG:  '📋',
+  FND: '🪨',
+  STR: '🔩',
+  BLR: '🔥',
+  SPR: '💧',
+  EW:  '🌍',
+  ANT: '📡',
+  CC:  '🛤',
+  STP: '🚿',
+  OTH: '📌',
+};
+```
+
+---
+
+### ALL_JOB_TYPES
+
+Array of all primary job type codes used for filtering.
+
+```typescript
+export const ALL_JOB_TYPES = [
+  'NB', 'DM', 'GC', 'PL', 'ME', 'SOL', 
+  'SHD', 'SCF', 'FNC', 'STR', 'FND', 'SG'
+];
+```
+
+---
+
+### ALL_BOROUGHS
+
+Array of all NYC borough names (uppercase).
+
+```typescript
+export const ALL_BOROUGHS = [
+  'MANHATTAN', 'BROOKLYN', 'QUEENS', 
+  'BRONX', 'STATEN ISLAND'
+];
+```
+
+---
+
+## Complete Usage Example
+
+```typescript
+import {
+  fetchPermits,
+  getJobColor,
+  getJobEmoji,
+  getJobLabel,
+  formatAddress,
+  formatDate,
+  ALL_JOB_TYPES,
+  ALL_BOROUGHS,
+} from './permits';
+
+// Fetch and display permits
+async function showPermits() {
+  const permits = await fetchPermits(7);
+  
+  permits.forEach(permit => {
+    const type = permit.job_type ?? 'OTH';
+    const color = getJobColor(type);
+    const emoji = getJobEmoji(type);
+    const label = getJobLabel(type);
+    const address = formatAddress(permit);
+    const date = formatDate(permit.issued_date);
+    
+    console.log(`${emoji} ${label}`);
+    console.log(`Address: ${address}`);
+    console.log(`Issued: ${date}`);
+    console.log(`Color: ${color}`);
+  });
+}
+
+// Filter permits by borough
+function filterByBorough(permits: Permit[], borough: string) {
+  return permits.filter(p => p.borough === borough);
+}
+
+const manhattanPermits = filterByBorough(permits, 'MANHATTAN');
+```

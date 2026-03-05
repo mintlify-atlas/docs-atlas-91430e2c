@@ -1,0 +1,273 @@
+---
+title: Architecture
+description: App structure, component hierarchy, state management, and data flow
+---
+
+NYC Permit Pulse is a React + TypeScript single-page application that renders an interactive deep-zoom map with live permit overlays. The architecture is designed for performance with large datasets (5,000+ markers) and smooth pan/zoom interactions.
+
+## Tech Stack
+
+The application is built with:
+
+- **[React](https://react.dev/)** - UI components and state management
+- **[Vite](https://vitejs.dev/)** - Fast build tool and dev server
+- **[TypeScript](https://www.typescriptlang.org/)** - Type-safe development
+- **[OpenSeadragon](https://openseadragon.github.io/)** - Deep-zoom tile viewer for the isometric map
+- **[react-window](https://react-window.vercel.app/)** - Virtualized permit list for performance
+
+## Component Structure
+
+The application follows a single-file component architecture centered around `App.tsx`:
+
+```typescript
+// src/App.tsx - Main application component
+import OpenSeadragon from 'openseadragon';
+import { FixedSizeList as List } from 'react-window';
+import { latlngToImagePx, IMAGE_DIMS } from './coordinates';
+import { fetchPermits, getJobColor, getJobEmoji } from './permits';
+import { NeighborhoodLabels } from './NeighborhoodLabels';
+```
+
+### Core Components
+
+<CardGroup cols={2}>
+  <Card title="App" icon="layer-group">
+    Main container - manages OpenSeadragon viewer, permit data fetching, filtering, and overlay rendering
+  </Card>
+  <Card title="PermitDrawer" icon="sidebar">
+    Slide-in detail panel showing full permit information, owner/contractor details, and external links
+  </Card>
+  <Card title="PermitRow" icon="list">
+    Virtualized list item for the sidebar permit list - renders type, address, and date
+  </Card>
+  <Card title="PermitChart" icon="chart-bar">
+    Bar chart breakdown of permit types in the current filter set
+  </Card>
+</CardGroup>
+
+### Helper Components
+
+```typescript
+// NeighborhoodLabels class - LOD label system
+class NeighborhoodLabels {
+  constructor(viewer: OpenSeadragon.Viewer);
+  destroy(): void;
+}
+```
+
+The `NeighborhoodLabels` component provides three zoom levels:
+- **Borough level** - 5 major boroughs at low zoom
+- **Major neighborhoods** - ~30 prominent areas at medium zoom
+- **All NTAs** - 197 neighborhood tabulation areas at high zoom
+
+## State Management
+
+The app uses React hooks for local state - no external state management library. All state is managed in `App.tsx`:
+
+```typescript
+// Permit data
+const [permits, setPermits] = useState<Permit[]>([]);
+const [filteredPermits, setFilteredPermits] = useState<Permit[]>([]);
+
+// UI state
+const [loading, setLoading] = useState(true);
+const [drawerPermit, setDrawerPermit] = useState<Permit | null>(null);
+const [selectedPermit, setSelectedPermit] = useState<Permit | null>(null);
+const [overlayOn, setOverlayOn] = useState(true);
+
+// Filter state
+const [filters, setFilters] = useState<FilterState>({
+  jobTypes: new Set(ALL_JOB_TYPES),
+  boroughs: new Set(['MANHATTAN']),
+  daysBack: 7,
+});
+```
+
+### Filter State Interface
+
+```typescript
+export interface FilterState {
+  jobTypes: Set<string>;
+  boroughs: Set<string>;
+  daysBack: number;
+}
+```
+
+## Data Flow
+
+The application follows a unidirectional data flow:
+
+<Steps>
+  <Step title="Fetch Permits">
+    `fetchPermits(daysBack)` queries NYC Open Data Socrata APIs and merges two datasets
+  </Step>
+  <Step title="Filter Data">
+    `useMemo` hook filters permits by job type and borough selection
+  </Step>
+  <Step title="Render Markers">
+    `placeMarkers()` converts lat/lng to image pixels and adds OpenSeadragon overlays in chunks
+  </Step>
+  <Step title="Handle Interactions">
+    Click handlers update `selectedPermit` and `drawerPermit` state, triggering UI updates
+  </Step>
+</Steps>
+
+### Data Fetching
+
+Permits are fetched on mount and refreshed every 5 minutes:
+
+```typescript
+useEffect(() => {
+  async function load() {
+    setLoading(true);
+    try {
+      const data = await fetchPermits(filters.daysBack);
+      setPermits(data);
+    } catch (e) {
+      setError('Failed to load permit data.');
+    } finally {
+      setLoading(false);
+    }
+  }
+  load();
+  const interval = setInterval(load, 5 * 60 * 1000);
+  return () => clearInterval(interval);
+}, [filters.daysBack]);
+```
+
+## Performance Optimizations
+
+### Chunked Marker Rendering
+
+To avoid blocking the main thread, markers are added in chunks of 400 per frame using `requestAnimationFrame`:
+
+```typescript
+const CHUNK = 400;
+let i = 0;
+function addChunk() {
+  const end = Math.min(i + CHUNK, entries.length);
+  for (; i < end; i++) {
+    // Add marker to OpenSeadragon
+    osdRef.current.addOverlay({ element, location, placement });
+  }
+  if (i < entries.length) {
+    markerRafRef.current = requestAnimationFrame(addChunk);
+  }
+}
+markerRafRef.current = requestAnimationFrame(addChunk);
+```
+
+### Pre-computed Opacity Values
+
+Recency fade is calculated once for all permits in O(n) instead of O(n²):
+
+```typescript
+function computeOpacities(permits: Permit[]): Map<Permit, number> {
+  const times = permits.map(p => new Date(p.issued_date ?? '').getTime());
+  const min = Math.min(...times.filter(t => !isNaN(t)));
+  const max = Math.max(...times.filter(t => !isNaN(t)));
+  
+  const map = new Map<Permit, number>();
+  permits.forEach((p, i) => {
+    const t = times[i];
+    const opacity = isNaN(t) || max === min 
+      ? 1 
+      : 0.5 + 0.5 * ((t - min) / (max - min));
+    map.set(p, opacity);
+  });
+  return map;
+}
+```
+
+### Virtualized List
+
+The sidebar permit list uses `react-window` to only render visible items:
+
+```typescript
+<List
+  height={permitListHeight}
+  itemCount={sortedPermits.length}
+  itemSize={48}
+  width="100%"
+  itemData={{ sortedPermits, selectedPermit, setDrawerPermit, flyToPermit }}
+>
+  {PermitRow}
+</List>
+```
+
+## OpenSeadragon Integration
+
+The isometric map is rendered using OpenSeadragon's Deep Zoom Image (DZI) format with custom tile sources:
+
+```typescript
+const TILE_BASE = '/dzi/tiles_files';
+const DZI_DIMENSIONS = { width: 123904, height: 100864 };
+const MAX_LEVEL = 8;
+const TILE_SIZE = 512;
+
+function buildTileSource() {
+  const osdMaxLevel = Math.ceil(Math.log2(Math.max(
+    DZI_DIMENSIONS.width, 
+    DZI_DIMENSIONS.height
+  )));
+  
+  return {
+    width: DZI_DIMENSIONS.width,
+    height: DZI_DIMENSIONS.height,
+    tileSize: TILE_SIZE,
+    tileOverlap: 0,
+    minLevel: osdMaxLevel - MAX_LEVEL,
+    maxLevel: osdMaxLevel,
+    getTileUrl: (level: number, x: number, y: number) => {
+      const serverLevel = level - (osdMaxLevel - MAX_LEVEL);
+      return `${TILE_BASE}/${serverLevel}/${x}_${y}.webp`;
+    },
+  };
+}
+```
+
+### Critical OSD Viewport Coordinates
+
+<Warning>
+OpenSeadragon uses image **width** as the unit for **both** axes. When converting image pixels to viewport coordinates:
+
+```typescript
+// ✓ CORRECT
+vpX = imgX / IMAGE_DIMS.width;
+vpY = imgY / IMAGE_DIMS.width;  // divide by WIDTH, not height!
+
+// ✗ WRONG
+vpY = imgY / IMAGE_DIMS.height; // causes 22% downward offset
+```
+</Warning>
+
+## File Structure
+
+```
+src/
+├── App.tsx                  # Main app component (804 lines)
+├── App.css                  # All styles - dark terminal aesthetic
+├── coordinates.ts           # Lat/lng → isometric pixel projection
+├── permits.ts               # API fetch, normalization, color/label maps
+├── types.ts                 # TypeScript interfaces
+├── NeighborhoodLabels.ts    # LOD neighborhood label system
+├── nta_centroids.json       # 197 NYC NTA centroids
+└── helicopters.ts           # Live helicopter overlay (experimental)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Data Sources" icon="database" href="/concepts/data-sources">
+    Learn about the NYC Open Data integration
+  </Card>
+  <Card title="Coordinate Projection" icon="map" href="/concepts/coordinate-projection">
+    Understand the isometric projection math
+  </Card>
+  <Card title="Permit Types" icon="tag" href="/concepts/permit-types">
+    Explore all 18+ permit type codes and colors
+  </Card>
+  <Card title="Development" icon="code" href="/deployment/development">
+    Set up your local development environment
+  </Card>
+</CardGroup>

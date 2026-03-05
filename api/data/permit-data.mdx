@@ -1,0 +1,334 @@
+---
+title: 'Permit Data'
+description: 'Fetch and normalize NYC DOB permit data from Socrata Open Data API'
+---
+
+## Overview
+
+The permit data integration fetches construction permits from two NYC Department of Buildings (DOB) datasets and merges them into a unified stream. This handles both work-type permits (General Construction, Plumbing, etc.) and job-level filings (New Building, Demolition).
+
+## fetchPermits()
+
+Fetches permits from the past N days by querying two DOB NOW datasets and merging the results.
+
+```typescript src/permits.ts
+export async function fetchPermits(daysBack: number = 30): Promise<Permit[]>
+```
+
+### Parameters
+
+<ParamField path="daysBack" type="number" default={30}>
+  Number of days to fetch permits for. Scales API limits automatically:
+  - 1 day: 1,000 permits
+  - 7 days: 2,000 permits  
+  - 30 days: 5,000 permits (capped to keep map usable)
+</ParamField>
+
+### Returns
+
+Returns a `Promise<Permit[]>` containing normalized permits from both datasets.
+
+### Implementation Details
+
+#### Two-Dataset Strategy
+
+The function queries two separate Socrata datasets:
+
+1. **rbx6-tga4** — DOB NOW: Build – Approved Permits  
+   Work-type permits: General Construction, Plumbing, Mechanical, Solar, Scaffold, etc.  
+   Excludes New Building and Full Demolition.
+
+2. **w9ak-ipjd** — DOB NOW: Build – Job Filings  
+   Job-level filings: New Building, Full Demolition, Alteration.  
+   Only NB and DM records are pulled from this dataset.
+
+#### Proxy Paths
+
+All requests use proxy paths to avoid CORS issues:
+
+```typescript src/permits.ts
+const PERMITS_BASE = '/api/permits';  // Proxies to data.cityofnewyork.us/resource/rbx6-tga4.json
+const JOBS_BASE = '/api/jobs';        // Proxies to data.cityofnewyork.us/resource/w9ak-ipjd.json
+```
+
+Vite handles these in development; Vercel rewrites handle them in production.
+
+#### Query String Construction
+
+<Warning>
+  **Do NOT use `URLSearchParams`** — it double-encodes `$` as `%24`, breaking Socrata's API which requires literal `$order`, `$where`, etc.
+</Warning>
+
+Query strings are manually constructed using Socrata Query Language (SoQL):
+
+```typescript src/permits.ts
+const workQuery = [
+  `$order=issued_date DESC`,
+  `$limit=${limit}`,
+  `$where=issued_date >= '${cutoffStr}' AND latitude IS NOT NULL AND longitude IS NOT NULL`,
+].map(p => p.replace(/ /g, '+')).join('&');
+```
+
+Spaces are manually replaced with `+` for URL encoding.
+
+#### Date Cutoff Calculation
+
+The function uses `getLatestDatasetDate()` to determine the actual latest available data, rather than assuming the dataset is current:
+
+```typescript src/permits.ts
+const latestDate = await getLatestDatasetDate();
+const cutoff = new Date(latestDate);
+cutoff.setDate(cutoff.getDate() - (daysBack - 1));
+const cutoffStr = cutoff.toISOString().split('T')[0];  // "2026-02-03"
+```
+
+This accounts for datasets that may lag 2-3 days behind real-time.
+
+#### Parallel Fetch
+
+Both datasets are fetched in parallel for performance:
+
+```typescript src/permits.ts
+const [workRes, jobRes] = await Promise.all([
+  fetch(`${PERMITS_BASE}?${workQuery}`, { cache: 'no-store' }),
+  fetch(`${JOBS_BASE}?${jobQuery}`, { cache: 'no-store' }),
+]);
+```
+
+#### Response Normalization
+
+Work permits and job filings have different schemas and must be normalized:
+
+**Work Permits:**
+```typescript src/permits.ts
+const workPermits = workRaw.map(p => ({
+  ...p,
+  job_type: workTypeToCode(p.work_type ?? ''),  // "General Construction" → "GC"
+}));
+```
+
+**Job Filings:**
+```typescript src/permits.ts
+const jobPermits: Permit[] = jobRaw.map(p => ({
+  ...p,
+  work_type: p.job_type,                         // "New Building" / "Full Demolition"
+  job_type: p.job_type === 'New Building' ? 'NB' : 'DM',
+  issued_date: p.approved_date,                  // Use approved_date as issued date
+}));
+```
+
+#### Final Merge
+
+```typescript src/permits.ts
+return [...workPermits, ...jobPermits];
+```
+
+### Example Request
+
+<CodeGroup>
+```typescript Usage
+const permits = await fetchPermits(7);  // Last 7 days
+console.log(`Fetched ${permits.length} permits`);
+```
+
+```json Response Schema
+[
+  {
+    "job_filing_number": "121234567",
+    "work_permit": "WP1234567",
+    "house_no": "123",
+    "street_name": "BROADWAY",
+    "borough": "MANHATTAN",
+    "work_type": "General Construction",
+    "job_type": "GC",
+    "issued_date": "2026-03-01T00:00:00.000",
+    "latitude": "40.7589",
+    "longitude": "-73.9851",
+    "owner_name": "ACME REALTY LLC",
+    "job_description": "INTERIOR ALTERATIONS"
+  }
+]
+```
+</CodeGroup>
+
+### Error Handling
+
+```typescript src/permits.ts
+if (!workRes.ok) throw new Error(`Permits API error: ${workRes.status}`);
+if (!jobRes.ok) throw new Error(`Jobs API error: ${jobRes.status}`);
+```
+
+Throws errors for non-200 responses. Calling code should handle with try/catch.
+
+---
+
+## getLatestDatasetDate()
+
+Determines the actual latest available date in the permits dataset, accounting for data lag.
+
+```typescript src/permits.ts
+async function getLatestDatasetDate(): Promise<Date>
+```
+
+### Caching Strategy
+
+The latest dataset date is cached for **10 minutes** to avoid redundant API calls on every filter change:
+
+```typescript src/permits.ts
+let _latestDateCache: { date: string; fetchedAt: number } | null = null;
+
+async function getLatestDatasetDate(): Promise<Date> {
+  const now = Date.now();
+  // Cache for 10 minutes
+  if (_latestDateCache && now - _latestDateCache.fetchedAt < 10 * 60 * 1000) {
+    return new Date(_latestDateCache.date);
+  }
+  // ... fetch logic
+}
+```
+
+### Query Implementation
+
+Uses SoQL's `max()` aggregation function:
+
+```typescript src/permits.ts
+const res = await fetch(`${PERMITS_BASE}?$select=max(issued_date)`);
+const data = await res.json();
+const dateStr = data[0]?.max_issued_date ?? data[0]?.max_issued_date;
+```
+
+### Fallback Logic
+
+If the API call fails or returns no data, falls back to **2 days ago**:
+
+```typescript src/permits.ts
+const d = new Date();
+d.setDate(d.getDate() - 2);
+return d;
+```
+
+<Note>
+  The 2-day fallback accounts for typical DOB dataset lag. Real-world observation shows datasets are usually 2-3 days behind real-time.
+</Note>
+
+---
+
+## workTypeToCode()
+
+Normalizes verbose work type strings to two-letter codes.
+
+```typescript src/permits.ts
+export function workTypeToCode(workType: string): string
+```
+
+### Supported Mappings
+
+| Work Type             | Code |
+|-----------------------|------|
+| New Building          | NB   |
+| Full Demolition       | DM   |
+| General Construction  | GC   |
+| Plumbing              | PL   |
+| Mechanical            | ME   |
+| Solar                 | SOL  |
+| Sidewalk Shed         | SHD  |
+| Scaffold              | SCF  |
+| Construction Fence    | FNC  |
+| Sign                  | SG   |
+| Foundation            | FND  |
+| Structural            | STR  |
+| Boiler                | BLR  |
+| Sprinkler             | SPR  |
+| Earth Work            | EW   |
+| Antenna               | ANT  |
+| Curb Cut              | CC   |
+| Standpipe             | STP  |
+| Other                 | OTH  |
+
+### Implementation
+
+```typescript src/permits.ts
+export function workTypeToCode(workType: string): string {
+  const wt = workType.toLowerCase();
+  if (wt.includes('new building'))      return 'NB';
+  if (wt.includes('full demolition'))   return 'DM';
+  if (wt.includes('general construction')) return 'GC';
+  // ... 15 more conditions
+  return 'OTH';
+}
+```
+
+Uses substring matching (case-insensitive) to handle variations in dataset formatting.
+
+---
+
+## Type Definitions
+
+### Permit Interface
+
+```typescript src/types.ts
+export interface Permit {
+  // Identity
+  job_filing_number?: string;
+  work_permit?: string;
+  tracking_number?: string;
+  bin?: string;
+  sequence_number?: string;
+
+  // Address
+  house_no?: string;
+  street_name?: string;
+  borough?: string;
+  zip_code?: string;
+  block?: string;
+  lot?: string;
+  bbl?: string;
+  community_board?: string;
+  nta?: string;               // Neighborhood name (e.g. "Fort Greene")
+  council_district?: string;
+
+  // Work
+  work_type?: string;         // Verbose: "General Construction", "Full Demolition"
+  job_type?: string;          // Normalized code: NB/DM/GC/etc.
+  permit_status?: string;
+  job_description?: string;
+  filing_reason?: string;
+  work_on_floor?: string;
+  estimated_job_costs?: string;
+
+  // Dates (ISO format: 2026-02-24T00:00:00.000)
+  issued_date?: string;
+  approved_date?: string;
+  expired_date?: string;
+
+  // Owner
+  owner_name?: string;
+  owner_business_name?: string;
+
+  // Applicant / contractor
+  applicant_first_name?: string;
+  applicant_last_name?: string;
+  applicant_business_name?: string;
+  applicant_business_address?: string;
+
+  // Filing representative (expediter)
+  filing_representative_first_name?: string;
+  filing_representative_last_name?: string;
+  filing_representative_business_name?: string;
+
+  // Coordinates
+  latitude?: string;
+  longitude?: string;
+}
+```
+
+---
+
+## Related Functions
+
+See [Utilities](/api/utils) for helper functions:
+- `formatAddress(permit)` — Formats permit address
+- `formatDate(dateStr)` — Formats ISO date strings
+- `getJobColor(jobType)` — Returns hex color for job type
+- `getJobEmoji(jobType)` — Returns emoji for job type
+- `getJobLabel(jobType)` — Returns human-readable label

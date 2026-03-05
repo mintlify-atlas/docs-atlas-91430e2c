@@ -1,0 +1,328 @@
+---
+title: Filter System
+description: Multi-dimensional filtering with permit type chips, borough selection, and date range controls
+---
+
+The filter system allows users to narrow down visible permits by job type, borough, and date range, with real-time updates to the map overlay and sidebar list.
+
+## Filter State Interface
+
+Filters are managed through a typed state object:
+
+```tsx
+// types.ts:67-72
+export interface FilterState {
+  jobTypes: Set<string>;
+  boroughs: Set<string>;
+  daysBack: number;
+}
+```
+
+### Initial State
+
+```tsx
+// App.tsx:308-312
+const [filters, setFilters] = useState<FilterState>({
+  jobTypes: new Set(ALL_JOB_TYPES),
+  boroughs: new Set(['MANHATTAN']),
+  daysBack: 7,
+});
+```
+
+<Note>
+By default, all job types are selected but only Manhattan is shown. This provides a focused initial view of ~500-800 permits.
+</Note>
+
+## Permit Type Filtering
+
+### Available Types
+
+Twelve primary permit types are exposed as filter chips:
+
+```tsx
+// permits.ts:212
+export const ALL_JOB_TYPES = ['NB', 'DM', 'GC', 'PL', 'ME', 'SOL', 'SHD', 'SCF', 'FNC', 'STR', 'FND', 'SG'];
+```
+
+### Chip UI Implementation
+
+Filter chips are color-coded and show emoji icons:
+
+```tsx
+// App.tsx:681-693
+<div className="filter-group">
+  <div className="filter-label">PERMIT TYPE</div>
+  <div className="chips">
+    {ALL_JOB_TYPES.map(jt => (
+      <button key={jt}
+        className={`chip ${filters.jobTypes.has(jt) ? 'active' : ''}`}
+        style={{ '--chip-color': getJobColor(jt) } as React.CSSProperties}
+        onClick={() => toggleJobType(jt)} title={getJobLabel(jt)}>
+        {getJobEmoji(jt)} {jt}
+      </button>
+    ))}
+  </div>
+</div>
+```
+
+### Toggle Logic
+
+Toggling a job type adds or removes it from the Set:
+
+```tsx
+// App.tsx:578-582
+const toggleJobType = (jt: string) => setFilters(prev => {
+  const next = new Set(prev.jobTypes);
+  next.has(jt) ? next.delete(jt) : next.add(jt);
+  return { ...prev, jobTypes: next };
+});
+```
+
+<Tip>
+Using a `Set` instead of an array provides O(1) lookup performance when filtering thousands of permits.
+</Tip>
+
+### Type Labels and Colors
+
+Each type has a human-readable label and distinct color:
+
+```tsx
+// permits.ts:120-140
+export const WORK_TYPE_LABELS: Record<string, string> = {
+  NB:  'New Building',
+  DM:  'Demolition',
+  GC:  'General Construction',
+  PL:  'Plumbing',
+  ME:  'Mechanical',
+  SOL: 'Solar',
+  SHD: 'Sidewalk Shed',
+  SCF: 'Scaffold',
+  FNC: 'Const. Fence',
+  SG:  'Sign',
+  FND: 'Foundation',
+  STR: 'Structural',
+  // ...
+};
+
+export const WORK_TYPE_COLORS: Record<string, string> = {
+  NB:  '#00ff88',  // bright green
+  DM:  '#ff2222',  // red
+  GC:  '#ff8800',  // orange
+  // ...
+};
+```
+
+## Borough Filtering
+
+### Available Boroughs
+
+```tsx
+// permits.ts:213
+export const ALL_BOROUGHS = ['MANHATTAN', 'BROOKLYN', 'QUEENS', 'BRONX', 'STATEN ISLAND'];
+```
+
+### Borough Chips
+
+Borough chips use abbreviated names for compact display:
+
+```tsx
+// App.tsx:44-47
+const BOROUGH_ABBR: Record<string, string> = {
+  'MANHATTAN': 'MAN', 'BROOKLYN': 'BKN', 'QUEENS': 'QNS',
+  'BRONX': 'BRX', 'STATEN ISLAND': 'SI',
+};
+
+// App.tsx:694-704
+<div className="filter-group">
+  <div className="filter-label">BOROUGH</div>
+  <div className="chips">
+    {ALL_BOROUGHS.map(b => (
+      <button key={b}
+        className={`chip ${filters.boroughs.has(b) ? 'active' : ''}`}
+        onClick={() => toggleBorough(b)}>
+        {BOROUGH_ABBR[b] ?? b}
+      </button>
+    ))}
+  </div>
+</div>
+```
+
+### Toggle Logic
+
+```tsx
+// App.tsx:584-588
+const toggleBorough = (b: string) => setFilters(prev => {
+  const next = new Set(prev.boroughs);
+  next.has(b) ? next.delete(b) : next.add(b);
+  return { ...prev, boroughs: next };
+});
+```
+
+## Date Range Filtering
+
+### Available Ranges
+
+Two preset ranges are offered:
+
+```tsx
+// App.tsx:706-718
+<div className="filter-group">
+  <div className="filter-label">DATE RANGE</div>
+  <div className="chips">
+    {([7, 30] as const).map(d => (
+      <button key={d}
+        className={`chip ${filters.daysBack === d ? 'active' : ''}`}
+        onClick={() => setFilters(prev => ({ ...prev, daysBack: d }))}>
+        {d === 7 ? '7 Days' : '30 Days'}
+      </button>
+    ))}
+  </div>
+  <div className="filter-lag-note">⚠ DOB data lags 2–5 days</div>
+</div>
+```
+
+<Note>
+The DOB data lag warning reminds users that permit data is not real-time — the NYC Department of Buildings publishes with a 2-5 day delay.
+</Note>
+
+### Date Range Logic
+
+Date filtering happens server-side during data fetch:
+
+```tsx
+// App.tsx:362-380
+useEffect(() => {
+  setPermits([]);
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchPermits(filters.daysBack);
+      setPermits(data);
+    } catch (e) {
+      setError('Failed to load permit data.');
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }
+  load();
+  const interval = setInterval(load, 5 * 60 * 1000);
+  return () => clearInterval(interval);
+}, [filters.daysBack]);
+```
+
+The `fetchPermits` function calculates the cutoff date:
+
+```tsx
+// permits.ts:41-60
+export async function fetchPermits(daysBack: number = 30): Promise<Permit[]> {
+  const latestDate = await getLatestDatasetDate();
+  const cutoff = new Date(latestDate);
+  cutoff.setDate(cutoff.getDate() - (daysBack - 1));
+  const cutoffStr = cutoff.toISOString().split('T')[0];
+
+  // Scale limit by date range — 1d ~400, 7d ~3500, 30d ~12k
+  const limit = daysBack <= 1 ? 1000 : daysBack <= 7 ? 2000 : 5000;
+
+  const workQuery = [
+    `$order=issued_date DESC`,
+    `$limit=${limit}`,
+    `$where=issued_date >= '${cutoffStr}' AND latitude IS NOT NULL AND longitude IS NOT NULL`,
+  ].map(p => p.replace(/ /g, '+')).join('&');
+  
+  // ...
+}
+```
+
+## Filter Application Logic
+
+Filters are applied via `useMemo` to avoid unnecessary recalculation:
+
+```tsx
+// App.tsx:314-320
+const filteredPermits = useMemo(() => permits.filter(p => {
+  const jt = p.job_type?.toUpperCase() ?? 'OTHER';
+  const borough = p.borough?.toUpperCase() ?? '';
+  const jobTypeMatch = filters.jobTypes.has(jt) || (!ALL_JOB_TYPES.includes(jt) && filters.jobTypes.has('OTHER'));
+  const boroughMatch = filters.boroughs.has(borough);
+  return jobTypeMatch && boroughMatch;
+}), [permits, filters.jobTypes, filters.boroughs]);
+```
+
+### Fallback Handling
+
+Unrecognized job types are mapped to 'OTHER':
+
+```tsx
+// App.tsx:316-317
+const jt = p.job_type?.toUpperCase() ?? 'OTHER';
+const jobTypeMatch = filters.jobTypes.has(jt) || (!ALL_JOB_TYPES.includes(jt) && filters.jobTypes.has('OTHER'));
+```
+
+## Filter State Display
+
+The sidebar header shows the filtered permit count:
+
+```tsx
+// App.tsx:668-671
+<div className="sidebar-meta">
+  {loading ? '…' : `${filteredPermits.length} permits`}
+  {!dziLoaded && ' · loading map'}
+</div>
+```
+
+## Performance Characteristics
+
+<Steps>
+  <Step title="Client-Side Filtering">
+    Job type and borough filters run in the browser using `Array.filter()` with O(n) complexity
+  </Step>
+  <Step title="Server-Side Date Range">
+    Date filtering happens during the Socrata API query, reducing payload size
+  </Step>
+  <Step title="Memoization">
+    `useMemo` prevents re-filtering on every render — only recalculates when permits or filter criteria change
+  </Step>
+  <Step title="Set Lookups">
+    Using `Set.has()` for filter matching provides O(1) lookup instead of O(n) array search
+  </Step>
+</Steps>
+
+## Filter Reset Behavior
+
+<Accordion title="What happens when all filters are deselected?">
+If all job types or boroughs are deselected, `filteredPermits` becomes empty and the map overlay is cleared. The UI shows "No permits match filters" in the permit list.
+
+This is intentional — the app never forces a filter to remain active. Users can create an empty state by deselecting everything.
+</Accordion>
+
+## Reactive Dependencies
+
+The permit overlay re-renders when filters change:
+
+```tsx
+// App.tsx:563
+useEffect(() => { if (dziLoaded) placeMarkers(); }, [dziLoaded, placeMarkers]);
+```
+
+The `placeMarkers` callback depends on `filteredPermits`:
+
+```tsx
+// App.tsx:561
+}, [filteredPermits, overlayOn]);
+```
+
+This creates a reactive chain: filter change → `filteredPermits` update → `placeMarkers` rerun → overlay refresh.
+
+## Auto-Refresh
+
+Permit data is refetched every 5 minutes:
+
+```tsx
+// App.tsx:377-379
+const interval = setInterval(load, 5 * 60 * 1000);
+return () => clearInterval(interval);
+```
+
+This ensures the overlay stays current without requiring manual refresh, while respecting the filter state.

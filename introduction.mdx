@@ -1,0 +1,93 @@
+---
+title: Introduction
+description: Live NYC DOB permit visualization overlay for isometric.nyc with real-time filtering, color-coded markers, and interactive permit details
+---
+
+<img
+  className="block"
+  src="https://raw.githubusercontent.com/ziggy2socks/isometric-permits/main/public/screenshot.jpg"
+  alt="NYC Permit Pulse Screenshot"
+/>
+
+## Welcome to NYC Permit Pulse
+
+NYC Permit Pulse is a live visualization of New York City Department of Buildings (DOB) permit activity, overlaid onto the stunning pixel-art isometric map created by [@cannoneyed](https://github.com/cannoneyed) at [isometric.nyc](https://isometric.nyc).
+
+Each dot on the map represents an active building permit — color-coded by type, with brightness indicating recency. Click any permit to see full filing details, or use the sidebar to filter by permit type, borough, and date range.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Live Permit Data" icon="database" href="/concepts/data-sources">
+    Fetches permit data directly from NYC Open Data (DOB NOW), updated daily
+  </Card>
+  <Card title="Color-Coded Markers" icon="palette" href="/features/permit-overlay">
+    18 distinct permit types from New Building to Solar, each with unique colors and icons
+  </Card>
+  <Card title="Interactive Filtering" icon="filter" href="/features/filtering">
+    Filter by permit type, borough, and date range (7 days or 30 days)
+  </Card>
+  <Card title="Coordinate Projection" icon="map" href="/concepts/coordinate-projection">
+    Custom lat/lng to isometric pixel conversion with 8-meter accuracy
+  </Card>
+  <Card title="Neighborhood Labels" icon="location-dot" href="/features/neighborhood-labels">
+    Zoom-level LOD: 5 boroughs → 40 major neighborhoods → 197 NTAs
+  </Card>
+  <Card title="Permit Details" icon="file-invoice" href="/features/permit-details">
+    Full permit drawer with DOB BIS, ZoLa, and Google Maps integration
+  </Card>
+  <Card title="Live Helicopters" icon="helicopter" href="/features/helicopter-tracking">
+    Real-time helicopter overlay via ADS-B Exchange (for fun)
+  </Card>
+  <Card title="Deep Zoom Tiles" icon="magnifying-glass-plus" href="/concepts/architecture">
+    OpenSeadragon rendering with 123,904 × 100,864px isometric NYC map
+  </Card>
+</CardGroup>
+
+## Quick Links
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Clone and run the project locally
+  </Card>
+  <Card title="Data Sources" icon="server" href="/concepts/data-sources">
+    Learn about NYC Open Data integration
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/permits">
+    Explore the permit data API
+  </Card>
+</CardGroup>
+
+## Data Sources
+
+NYC Permit Pulse merges data from two DOB NOW datasets via NYC Open Data:
+
+| Dataset | Socrata ID | Contents |
+|---------|------------|----------|
+| DOB NOW: Build – Approved Permits | `rbx6-tga4` | Work permits (GC, PL, ME, SOL, etc.) |
+| DOB NOW: Build – Job Filings | `w9ak-ipjd` | New Building + Full Demolition filings |
+
+<Warning>
+DOB NOW data lags approximately 2-5 days. The "7 Days" filter actually queries the past 7-9 days to account for this publishing delay.
+</Warning>
+
+## Built With
+
+- **[React](https://react.dev/)** + **[TypeScript](https://www.typescriptlang.org/)** — UI framework
+- **[Vite](https://vitejs.dev/)** — Build tool and dev server
+- **[OpenSeadragon](https://openseadragon.github.io/)** — Deep-zoom tile rendering
+- **[Tailwind CSS](https://tailwindcss.com/)** v4 — Styling
+- **[NYC Open Data](https://opendata.cityofnewyork.us/)** — Permit data (Socrata API)
+- **[ADS-B Exchange](https://adsb.lol/)** — Live helicopter tracking
+
+## Acknowledgements
+
+- **[@cannoneyed](https://github.com/cannoneyed)** — Creator of [isometric.nyc](https://isometric.nyc), the incredible pixel-art map that powers this visualization
+- **NYC Department of Buildings** / **NYC Open Data** — For making permit data publicly accessible
+
+## License
+
+MIT — See [LICENSE](https://github.com/ziggy2socks/isometric-permits/blob/main/LICENSE) for details.

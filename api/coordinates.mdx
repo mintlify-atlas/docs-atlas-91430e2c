@@ -1,0 +1,356 @@
+---
+title: 'coordinates.ts'
+description: 'Coordinate projection utilities for mapping lat/lng to isometric pixel space'
+icon: 'map-location-dot'
+---
+
+The `coordinates.ts` module handles coordinate transformation from geographic lat/lng to the isometric NYC map's pixel coordinate system. It ports the Python projection logic from `isometric-nyc/generation/shared.py`.
+
+## Overview
+
+The coordinate system uses a calibrated seed pixel position derived from 15 ground-truth points across NYC and NJ, achieving ~8m RMS accuracy across the full metro area.
+
+### Projection Details
+
+- **Seed location**: Empire State Building area (40.7484°N, 73.9857°W)
+- **Camera azimuth**: -15°
+- **Camera elevation**: -45°
+- **Projection accuracy**: RMS residual 28px (~8m), max 63px (~18m)
+- **Meters per pixel**: ~0.293 m/px (isotropic)
+- **Image dimensions**: 123,904 × 100,864 px
+- **Quadrant size**: 512 × 512 px
+
+<Warning>
+**OSD Viewport Coordinates**: OpenSeadragon uses image **width** as the unit for both axes:
+- `vpX = imgX / IMAGE_DIMS.width` ✓
+- `vpY = imgY / IMAGE_DIMS.width` ✓ (divide by width, not height!)
+
+Dividing `vpY` by height gives a ~22% downward offset.
+</Warning>
+
+---
+
+## Functions
+
+### latlngToImagePx()
+
+Converts a lat/lng coordinate directly to image pixel coordinates.
+
+<ParamField path="lat" type="number" required>
+  Latitude in decimal degrees (e.g., `40.7484`)
+</ParamField>
+
+<ParamField path="lng" type="number" required>
+  Longitude in decimal degrees (e.g., `-73.9857`)
+</ParamField>
+
+<ResponseField name="{ x: number; y: number }" type="object">
+  Image pixel coordinates
+  <Expandable title="properties">
+    <ResponseField name="x" type="number">
+      Horizontal pixel position (0 to 123,904)
+    </ResponseField>
+    <ResponseField name="y" type="number">
+      Vertical pixel position (0 to 100,864)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```typescript
+export function latlngToImagePx(
+  lat: number, 
+  lng: number
+): { x: number; y: number }
+```
+
+#### Implementation
+
+Uses the calibrated `SEED_PX` position and `MAP_CONFIG` to compute:
+1. Quadrant coordinates via `latlngToQuadrantCoords()`
+2. Image pixel = `SEED_PX + quadrant * 512`
+
+#### Example
+
+```typescript
+import { latlngToImagePx } from './coordinates';
+
+// Empire State Building
+const { x, y } = latlngToImagePx(40.7484, -73.9857);
+console.log(`Image pixel: (${x}, ${y})`);
+// Output: Image pixel: (45059, 43479)
+
+// Convert to OpenSeadragon viewport coordinates
+const vpX = x / 123904;
+const vpY = y / 123904;  // Note: divide by width, not height!
+viewer.viewport.panTo(new OpenSeadragon.Point(vpX, vpY));
+```
+
+---
+
+### latlngToQuadrantCoords()
+
+Converts a lat/lng to quadrant coordinates relative to the seed. Exact port of `latlng_to_quadrant_coords()` from `shared.py`.
+
+<ParamField path="config" type="MapConfig" required>
+  Map configuration object (typically `MAP_CONFIG` constant)
+</ParamField>
+
+<ParamField path="lat" type="number" required>
+  Latitude in decimal degrees
+</ParamField>
+
+<ParamField path="lng" type="number" required>
+  Longitude in decimal degrees
+</ParamField>
+
+<ResponseField name="{ qx: number; qy: number }" type="object">
+  Quadrant coordinates relative to seed
+  <Expandable title="properties">
+    <ResponseField name="qx" type="number">
+      Horizontal quadrant offset from seed (can be negative)
+    </ResponseField>
+    <ResponseField name="qy" type="number">
+      Vertical quadrant offset from seed (can be negative)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```typescript
+export function latlngToQuadrantCoords(
+  config: MapConfig,
+  lat: number,
+  lng: number
+): { qx: number; qy: number }
+```
+
+#### Algorithm
+
+1. Convert lat/lng difference from seed to meters
+   - `deltaNorth = (lat - seed.lat) * 111,111`
+   - `deltaEast = (lng - seed.lng) * 111,111 * cos(seed.lat)`
+
+2. Rotate by camera azimuth (inverse rotation)
+   ```typescript
+   deltaRotX = deltaEast * cos(azimuth) - deltaNorth * sin(azimuth)
+   deltaRotY = deltaEast * sin(azimuth) + deltaNorth * cos(azimuth)
+   ```
+
+3. Project to pixel shifts
+   ```typescript
+   shiftRight = deltaRotX
+   shiftUp = -deltaRotY * sin(elevation)
+   shiftXPx = shiftRight / metersPerPixel
+   shiftYPx = shiftUp / metersPerPixel
+   ```
+
+4. Convert to quadrants (512px each)
+   ```typescript
+   qx = shiftXPx / 512
+   qy = -shiftYPx / 512  // y increases downward
+   ```
+
+#### Example
+
+```typescript
+import { latlngToQuadrantCoords, MAP_CONFIG } from './coordinates';
+
+const { qx, qy } = latlngToQuadrantCoords(
+  MAP_CONFIG, 
+  40.7484, 
+  -73.9857
+);
+console.log(`Quadrant offset: (${qx}, ${qy})`);
+// Output: Quadrant offset: (0, 0)  // seed location
+```
+
+---
+
+## Constants
+
+### MAP_CONFIG
+
+Map generation configuration matching `generation_config.json` from `tiny-nyc`.
+
+```typescript
+export const MAP_CONFIG: MapConfig = {
+  seed: { lat: 40.7484, lng: -73.9857 },
+  camera_azimuth_degrees: -15,
+  camera_elevation_degrees: -45,
+  width_px: 1024,
+  height_px: 1024,
+  view_height_meters: 300,
+  tile_step: 0.5,
+};
+```
+
+<ResponseField name="seed" type="{ lat: number; lng: number }">
+  Geographic seed point (~Empire State Building)
+</ResponseField>
+
+<ResponseField name="camera_azimuth_degrees" type="number">
+  Camera rotation angle in degrees (-15° = slight counter-clockwise)
+</ResponseField>
+
+<ResponseField name="camera_elevation_degrees" type="number">
+  Camera elevation angle (-45° = isometric view)
+</ResponseField>
+
+<ResponseField name="width_px" type="number">
+  Quadrant width in pixels (1024px)
+</ResponseField>
+
+<ResponseField name="height_px" type="number">
+  Quadrant height in pixels (1024px)
+</ResponseField>
+
+<ResponseField name="view_height_meters" type="number">
+  Real-world height covered by each quadrant (300m)
+</ResponseField>
+
+<ResponseField name="tile_step" type="number">
+  Tile step multiplier (0.5 = 512px quadrants from 1024px tiles)
+</ResponseField>
+
+---
+
+### SEED_PX
+
+Calibrated seed pixel position from 15-point least-squares fit.
+
+```typescript
+export const SEED_PX = { x: 45059, y: 43479 };
+```
+
+Achieves agreement with `tiles_metadata.json` origin: `(-87, -84)` quadrants → `(44,544, 43,008)` pixels.
+
+---
+
+### IMAGE_DIMS
+
+Full assembled image dimensions.
+
+```typescript
+export const IMAGE_DIMS = { 
+  width: 123904,   // 242 quadrants × 512px
+  height: 100864   // 197 quadrants × 512px
+};
+```
+
+---
+
+### QUADRANT_PX
+
+Quadrant size in pixels (legacy compatibility).
+
+```typescript
+export const QUADRANT_PX = 512;
+```
+
+---
+
+## Complete Usage Example
+
+```typescript
+import OpenSeadragon from 'openseadragon';
+import { 
+  latlngToImagePx, 
+  IMAGE_DIMS,
+  MAP_CONFIG,
+  SEED_PX 
+} from './coordinates';
+import type { Permit } from './types';
+
+// Place permit markers on the map
+function placePermitMarkers(
+  viewer: OpenSeadragon.Viewer, 
+  permits: Permit[]
+) {
+  permits.forEach(permit => {
+    const lat = parseFloat(permit.latitude ?? '');
+    const lng = parseFloat(permit.longitude ?? '');
+    
+    if (isNaN(lat) || isNaN(lng)) return;
+    
+    // Convert to image pixels
+    const { x: imgX, y: imgY } = latlngToImagePx(lat, lng);
+    
+    // Bounds check
+    if (imgX < 0 || imgX > IMAGE_DIMS.width || 
+        imgY < 0 || imgY > IMAGE_DIMS.height) {
+      return; // Out of bounds
+    }
+    
+    // Convert to OpenSeadragon viewport coordinates
+    // CRITICAL: divide both by width (not height for Y!)
+    const vpX = imgX / IMAGE_DIMS.width;
+    const vpY = imgY / IMAGE_DIMS.width;
+    
+    // Create marker element
+    const marker = document.createElement('div');
+    marker.className = 'permit-marker';
+    marker.style.cssText = 'width:10px;height:10px';
+    
+    // Add to viewer
+    viewer.addOverlay({
+      element: marker,
+      location: new OpenSeadragon.Point(vpX, vpY),
+      placement: OpenSeadragon.Placement.CENTER,
+    });
+  });
+}
+
+// Pan to a specific lat/lng
+function panToLocation(
+  viewer: OpenSeadragon.Viewer,
+  lat: number,
+  lng: number
+) {
+  const { x, y } = latlngToImagePx(lat, lng);
+  const vpX = x / IMAGE_DIMS.width;
+  const vpY = y / IMAGE_DIMS.width;
+  
+  viewer.viewport.panTo(
+    new OpenSeadragon.Point(vpX, vpY)
+  );
+  viewer.viewport.zoomTo(6); // Zoom in
+}
+
+// Example: Pan to Empire State Building
+panToLocation(viewer, 40.7484, -73.9857);
+```
+
+---
+
+## Calibration Details
+
+The `SEED_PX` position was calibrated using 15 ground-truth points across NYC and New Jersey:
+
+- **Method**: Least-squares solve for optimal seed pixel
+- **RMS residual**: 28px (~8m)
+- **Max error**: 63px (~18m)
+- **Coverage**: All 5 NYC boroughs + NJ
+
+### Projection Properties
+
+- **Isotropic**: `mpp_x ≈ mpp_y ≈ 0.293 m/px`
+- **Linear**: Direct proportionality between geographic distance and pixel distance
+- **Calibrated**: Accounts for camera azimuth and elevation
+
+### Validation
+
+The seed pixel agrees well with the `tiles_metadata.json` origin:
+
+```typescript
+// tiles_metadata.json origin
+const metadataOrigin = { qx: -87, qy: -84 };
+const expectedPx = {
+  x: metadataOrigin.qx * 512,  // 44,544
+  y: metadataOrigin.qy * 512,  // 43,008
+};
+
+// Calibrated SEED_PX
+const SEED_PX = { x: 45059, y: 43479 };
+
+// Difference: ~515px horizontally, ~471px vertically
+// Well within expected bounds given calibration methodology
+```

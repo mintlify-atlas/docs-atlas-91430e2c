@@ -1,0 +1,302 @@
+---
+title: Data Sources
+description: NYC Open Data integration, Socrata datasets, data freshness, and caching strategy
+---
+
+NYC Permit Pulse fetches live building permit data from [NYC Open Data](https://opendata.cityofnewyork.us/) using the Socrata API. All data is public and requires no API key.
+
+## Datasets
+
+The app merges two DOB NOW datasets to provide comprehensive permit coverage:
+
+| Dataset | Socrata ID | Contents | Update Frequency |
+|---------|-----------|----------|------------------|
+| **DOB NOW: Build – Approved Permits** | `rbx6-tga4` | Work-type permits: GC, PL, ME, SOL, SHD, SCF, etc. | Daily |
+| **DOB NOW: Build – Job Filings** | `w9ak-ipjd` | Job-level filings: New Building (NB), Full Demolition (DM) | Daily |
+
+### Why Two Datasets?
+
+The DOB NOW system separates permits into two categories:
+
+1. **Work Permits** (`rbx6-tga4`) - cover specific types of work like plumbing, mechanical, scaffolding, etc.
+2. **Job Filings** (`w9ak-ipjd`) - cover entire projects like new buildings and demolitions
+
+To show a complete picture of construction activity, we fetch both and normalize them into a single unified format.
+
+## API Integration
+
+### Proxy Configuration
+
+All API requests go through proxied paths to avoid CORS issues:
+
+<Tabs>
+  <Tab title="Development (Vite)">
+    ```typescript
+    // vite.config.ts
+    export default defineConfig({
+      server: {
+        proxy: {
+          '/api/permits': {
+            target: 'https://data.cityofnewyork.us/resource/rbx6-tga4.json',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/permits/, ''),
+          },
+          '/api/jobs': {
+            target: 'https://data.cityofnewyork.us/resource/w9ak-ipjd.json',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/jobs/, ''),
+          },
+        },
+      },
+    });
+    ```
+  </Tab>
+  <Tab title="Production (Vercel)">
+    ```json
+    // vercel.json
+    {
+      "rewrites": [
+        {
+          "source": "/api/permits/:path*",
+          "destination": "https://data.cityofnewyork.us/resource/rbx6-tga4.json/:path*"
+        },
+        {
+          "source": "/api/jobs/:path*",
+          "destination": "https://data.cityofnewyork.us/resource/w9ak-ipjd.json/:path*"
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Fetch Implementation
+
+The `fetchPermits()` function queries both datasets in parallel:
+
+```typescript
+// src/permits.ts
+export async function fetchPermits(daysBack: number = 30): Promise<Permit[]> {
+  const latestDate = await getLatestDatasetDate();
+  const cutoff = new Date(latestDate);
+  cutoff.setDate(cutoff.getDate() - (daysBack - 1));
+  const cutoffStr = cutoff.toISOString().split('T')[0];
+
+  const limit = daysBack <= 1 ? 1000 : daysBack <= 7 ? 2000 : 5000;
+
+  const workQuery = [
+    `$order=issued_date DESC`,
+    `$limit=${limit}`,
+    `$where=issued_date >= '${cutoffStr}' AND latitude IS NOT NULL AND longitude IS NOT NULL`,
+  ].map(p => p.replace(/ /g, '+')).join('&');
+
+  const nbLimit = Math.max(50, Math.round(limit * 0.1));
+  const jobQuery = [
+    `$order=approved_date DESC`,
+    `$limit=${nbLimit}`,
+    `$where=job_type IN('New Building', 'Full Demolition') AND latitude IS NOT NULL AND approved_date >= '${cutoffStr}'`,
+  ].map(p => p.replace(/ /g, '+')).join('&');
+
+  const [workRes, jobRes] = await Promise.all([
+    fetch(`${PERMITS_BASE}?${workQuery}`, { cache: 'no-store' }),
+    fetch(`${JOBS_BASE}?${jobQuery}`, { cache: 'no-store' }),
+  ]);
+
+  const workPermits = (await workRes.json()).map(p => ({
+    ...p,
+    job_type: workTypeToCode(p.work_type ?? ''),
+  }));
+
+  const jobPermits = (await jobRes.json()).map(p => ({
+    ...p,
+    work_type: p.job_type,
+    job_type: p.job_type === 'New Building' ? 'NB' : 'DM',
+    issued_date: p.approved_date,
+  }));
+
+  return [...workPermits, ...jobPermits];
+}
+```
+
+<Note>
+**Socrata Query Syntax:** SoQL parameters like `$where`, `$order`, and `$limit` must be passed as **literal strings** in the URL. Using `URLSearchParams` encodes `$` as `%24`, which breaks the API (returns unfiltered results). We manually build query strings and replace spaces with `+`.
+</Note>
+
+## Data Freshness
+
+### Publication Lag
+
+<Warning>
+DOB NOW data lags **2-5 days** behind real-world permit issuance. A permit issued today may not appear in the dataset until 2-5 days later.
+</Warning>
+
+The app handles this by dynamically detecting the latest `issued_date` in the dataset:
+
+```typescript
+let _latestDateCache: { date: string; fetchedAt: number } | null = null;
+
+async function getLatestDatasetDate(): Promise<Date> {
+  const now = Date.now();
+  // Cache for 10 minutes
+  if (_latestDateCache && now - _latestDateCache.fetchedAt < 10 * 60 * 1000) {
+    return new Date(_latestDateCache.date);
+  }
+  
+  try {
+    const res = await fetch(`${PERMITS_BASE}?$select=max(issued_date)`);
+    const data = await res.json();
+    const dateStr = data[0]?.max_issued_date;
+    
+    if (dateStr) {
+      _latestDateCache = { date: dateStr, fetchedAt: now };
+      return new Date(dateStr);
+    }
+  } catch (_) { /* fall through */ }
+  
+  // Fallback: assume 2 days behind
+  const d = new Date();
+  d.setDate(d.getDate() - 2);
+  return d;
+}
+```
+
+### Auto-Refresh
+
+Permits are re-fetched every **5 minutes** to pick up new data as it's published:
+
+```typescript
+useEffect(() => {
+  async function load() {
+    const data = await fetchPermits(filters.daysBack);
+    setPermits(data);
+  }
+  load();
+  const interval = setInterval(load, 5 * 60 * 1000);
+  return () => clearInterval(interval);
+}, [filters.daysBack]);
+```
+
+## Query Limits
+
+To balance coverage and performance, query limits scale with the date range:
+
+| Date Range | Work Permits Limit | Job Filings Limit | Total Max |
+|------------|-------------------|-------------------|-----------|
+| 1 day      | 1,000            | 100              | ~1,100    |
+| 7 days     | 2,000            | 200              | ~2,200    |
+| 30 days    | 5,000            | 500              | ~5,500    |
+
+<Info>
+The 30-day limit is capped at 5,000 to prevent overwhelming the map with markers. Even at 5,000 markers, the chunked rendering system ensures smooth performance.
+</Info>
+
+## Data Normalization
+
+Raw permit data from the two datasets has different schemas. We normalize them into a single `Permit` interface:
+
+```typescript
+// src/types.ts
+export interface Permit {
+  // Identity
+  job_filing_number?: string;
+  work_permit?: string;
+  bin?: string;
+  
+  // Address
+  house_no?: string;
+  street_name?: string;
+  borough?: string;
+  zip_code?: string;
+  bbl?: string;
+  nta?: string;  // neighborhood name
+  
+  // Work
+  work_type?: string;  // verbose: "General Construction"
+  job_type?: string;   // normalized code: "GC", "NB", etc.
+  permit_status?: string;
+  job_description?: string;
+  estimated_job_costs?: string;
+  
+  // Dates
+  issued_date?: string;
+  approved_date?: string;
+  expired_date?: string;
+  
+  // Owner/Contractor
+  owner_business_name?: string;
+  applicant_business_name?: string;
+  filing_representative_business_name?: string;
+  
+  // Coordinates
+  latitude?: string;
+  longitude?: string;
+}
+```
+
+### Work Type Mapping
+
+The `work_type` field contains verbose strings like "General Construction" or "Solar Photovoltaic". We map these to short codes:
+
+```typescript
+export function workTypeToCode(workType: string): string {
+  const wt = workType.toLowerCase();
+  if (wt.includes('new building'))           return 'NB';
+  if (wt.includes('full demolition'))        return 'DM';
+  if (wt.includes('general construction'))   return 'GC';
+  if (wt.includes('plumbing'))               return 'PL';
+  if (wt.includes('mechanical'))             return 'ME';
+  if (wt.includes('solar'))                  return 'SOL';
+  if (wt.includes('sidewalk shed'))          return 'SHD';
+  if (wt.includes('scaffold'))               return 'SCF';
+  if (wt.includes('construction fence'))     return 'FNC';
+  if (wt.includes('sign'))                   return 'SG';
+  if (wt.includes('foundation'))             return 'FND';
+  if (wt.includes('structural'))             return 'STR';
+  if (wt.includes('boiler'))                 return 'BLR';
+  if (wt.includes('sprinkler'))              return 'SPR';
+  if (wt.includes('earth work'))             return 'EW';
+  if (wt.includes('antenna'))                return 'ANT';
+  if (wt.includes('curb cut'))               return 'CC';
+  if (wt.includes('standpipe'))              return 'STP';
+  return 'OTH';
+}
+```
+
+## Caching Strategy
+
+### Client-Side
+
+- **No caching** - All fetches use `{ cache: 'no-store' }` to always get the latest data
+- **Latest date cached** - The max `issued_date` is cached for 10 minutes to avoid repeated aggregation queries
+
+### Server-Side
+
+NYC Open Data's Socrata API has built-in caching. The datasets are updated **daily**, so frequent requests return cached results from Socrata's CDN.
+
+## Error Handling
+
+If the API request fails, the app displays an error banner and retries on the next interval:
+
+```typescript
+try {
+  const data = await fetchPermits(filters.daysBack);
+  setPermits(data);
+  setError(null);
+} catch (e) {
+  setError('Failed to load permit data.');
+  console.error(e);
+}
+```
+
+Users can continue interacting with the last successfully fetched dataset until connectivity is restored.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Permit Types" icon="tag" href="/concepts/permit-types">
+    See all 18+ permit type codes, colors, and emojis
+  </Card>
+  <Card title="Coordinate Projection" icon="map" href="/concepts/coordinate-projection">
+    Learn how lat/lng coordinates map to the isometric canvas
+  </Card>
+</CardGroup>

@@ -1,0 +1,449 @@
+---
+title: PermitMap Component
+description: MapLibre GL alternative map view for NYC Permit Pulse
+---
+
+The `PermitMap` component provides an alternative MapLibre GL-based map view for NYC Permit Pulse. Unlike the isometric view in the `App` component, this displays permits on a traditional 2D slippy map with CartoDB dark base tiles.
+
+## Component Structure
+
+The `PermitMap` component is defined in `src/PermitMap.tsx` and serves as a standalone alternative to the OpenSeadragon isometric view.
+
+```typescript
+export default function PermitMap(): JSX.Element
+```
+
+## State Management
+
+### Map State
+
+<ParamField path="mapContainerRef" type="React.RefObject<HTMLDivElement>">
+  Reference to the DOM element that hosts the MapLibre GL map
+</ParamField>
+
+<ParamField path="mapRef" type="React.RefObject<maplibregl.Map | null>">
+  Reference to the MapLibre GL map instance
+</ParamField>
+
+<ParamField path="popupRef" type="React.RefObject<maplibregl.Popup | null>">
+  Reference to the active popup (detail tooltip)
+</ParamField>
+
+<ParamField path="listRef" type="React.RefObject<HTMLDivElement>">
+  Reference to the permit list container (for smooth scrolling)
+</ParamField>
+
+### Filter State
+
+<ParamField path="dateFrom" type="string">
+  Start date for permit filtering (ISO date string, default: 7 days ago)
+</ParamField>
+
+<ParamField path="dateTo" type="string">
+  End date for permit filtering (ISO date string, default: today)
+</ParamField>
+
+<ParamField path="selectedTypes" type="Set<string>">
+  Set of selected job types (e.g., "NB", "DM", "GC")
+</ParamField>
+
+<ParamField path="selectedBoroughs" type="Set<string>">
+  Set of selected boroughs (default: all 5 boroughs)
+</ParamField>
+
+<ParamField path="search" type="string">
+  Search query string for filtering permits by address, description, or owner
+</ParamField>
+
+<ParamField path="sortField" type="SortField">
+  Current sort field: `'date'`, `'cost'`, or `'address'`
+</ParamField>
+
+<ParamField path="sortDir" type="SortDir">
+  Sort direction: `'asc'` or `'desc'`
+</ParamField>
+
+### Data State
+
+<ParamField path="allPermits" type="Permit[]">
+  Complete array of permits loaded from the API (up to 2,500)
+</ParamField>
+
+<ParamField path="filtered" type="Permit[]">
+  Array of permits after applying all client-side filters (type, borough, search)
+</ParamField>
+
+<ParamField path="loading" type="boolean">
+  True when permit data is being fetched
+</ParamField>
+
+<ParamField path="error" type="string | null">
+  Error message if permit data fetch fails
+</ParamField>
+
+<ParamField path="totalCount" type="number">
+  Total count of permits in the date range (may exceed 2,500)
+</ParamField>
+
+<ParamField path="selectedPermit" type="Permit | null">
+  Currently selected permit (for highlighting and detail panel)
+</ParamField>
+
+<ParamField path="sidebarOpen" type="boolean">
+  Whether the sidebar is open on mobile devices
+</ParamField>
+
+## Map Configuration
+
+### MAP_STYLE
+
+```typescript
+const MAP_STYLE = {
+  version: 8 as const,
+  glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
+  sources: {
+    carto: {
+      type: 'raster' as const,
+      tiles: ['https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}@2x.png'],
+      tileSize: 256,
+      attribution: '© OpenStreetMap © CartoDB',
+    },
+    carto_labels: {
+      type: 'raster' as const,
+      tiles: ['https://a.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}@2x.png'],
+      tileSize: 256,
+    },
+  },
+  layers: [
+    { id: 'carto-base', type: 'raster' as const, source: 'carto', paint: { 'raster-opacity': 1 } },
+    { id: 'carto-labels', type: 'raster' as const, source: 'carto_labels', paint: { 'raster-opacity': 0.6 } },
+  ],
+};
+```
+
+Defines the MapLibre GL style using CartoDB dark base tiles with separate label layer.
+
+See definition at `src/PermitMap.tsx:20-40`.
+
+### Map Initialization
+
+```typescript
+const map = new maplibregl.Map({
+  container: mapContainerRef.current,
+  style: MAP_STYLE,
+  center: [-73.98, 40.73],        // Manhattan
+  zoom: 11,
+  maxBounds: [[-74.6, 40.2], [-73.1, 41.2]],  // NYC bounds
+});
+```
+
+Initialized in effect at `src/PermitMap.tsx:73-119`.
+
+## Key Functions
+
+### loadPermits
+
+```typescript
+const loadPermits = useCallback(async () => Promise<void>, [dateFrom, dateTo])
+```
+
+Fetches permit data from the API:
+
+1. Sets `loading` to true
+2. Calls `fetchPermits(dateFrom, dateTo, RESULT_LIMIT)` where `RESULT_LIMIT = 2500`
+3. Updates `allPermits` state on success
+4. Sets `error` state on failure
+5. Sets `loading` to false
+
+<Note>
+  The API is capped at 2,500 results. If the date range contains more permits, the app shows a warning banner.
+</Note>
+
+See implementation at `src/PermitMap.tsx:126-138`.
+
+### updateMapDots
+
+```typescript
+const updateMapDots = useCallback((permits: Permit[]) => void, [])
+```
+
+Updates the permit marker layer on the map:
+
+1. Filters permits to those with valid `latitude` and `longitude`
+2. Converts to GeoJSON Feature collection with Point geometries
+3. Attaches properties:
+   - `color`: Job type color from `getJobColor()`
+   - `type`: Job type code
+   - `address`: Formatted address
+   - `date`: Issued date
+   - `_raw`: JSON-stringified permit object (for click handler)
+4. Updates the `permits` GeoJSON source
+
+See implementation at `src/PermitMap.tsx:185-205`.
+
+### selectPermit
+
+```typescript
+const selectPermit = useCallback((permit: Permit, map?: maplibregl.Map) => void, [])
+```
+
+Selects a permit and shows its detail popup:
+
+1. Updates `selectedPermit` state
+2. Closes sidebar on mobile
+3. Flies to permit location with `map.flyTo()` (zoom to level 15+)
+4. Creates a MapLibre Popup with permit details HTML
+5. Scrolls the permit list to bring the selected row into view
+
+See implementation at `src/PermitMap.tsx:207-226`.
+
+### toggleType
+
+```typescript
+const toggleType = (type: string) => void
+```
+
+Toggles a job type filter on/off by adding or removing it from `selectedTypes` Set.
+
+See implementation at `src/PermitMap.tsx:228-234`.
+
+### toggleBorough
+
+```typescript
+const toggleBorough = (b: string) => void
+```
+
+Toggles a borough filter on/off by adding or removing it from `selectedBoroughs` Set.
+
+See implementation at `src/PermitMap.tsx:236-242`.
+
+### buildPopupHTML
+
+```typescript
+function buildPopupHTML(p: Permit): string
+```
+
+Builds the HTML content for a permit popup:
+
+- Job type label (color-coded with glow effect)
+- Formatted address (bold)
+- Issue date (gray, uppercase)
+- Job description (truncated to 120 chars)
+- Estimated cost (if available)
+
+Returns a styled HTML string with inline styles matching the app's dark cyberpunk theme.
+
+See implementation at `src/PermitMap.tsx:463-474`.
+
+## Effect Lifecycle
+
+### Map Initialization Effect
+
+**When:** Component mounts (once)
+
+**Where:** `src/PermitMap.tsx:73-119`
+
+**Steps:**
+
+1. Creates MapLibre GL map instance
+2. Adds navigation control (zoom buttons)
+3. Registers 'load' handler that:
+   - Adds GeoJSON source: `permits`
+   - Adds circle layer: `permit-dots` with dynamic radius based on zoom
+   - Registers click handler on `permit-dots` that calls `selectPermit()`
+   - Changes cursor to pointer on marker hover
+4. Cleanup function removes map on unmount
+
+### Data Fetching Effect
+
+**When:** `dateFrom` or `dateTo` changes
+
+**Where:** `src/PermitMap.tsx:122-124`
+
+**Steps:**
+
+1. Calls `loadPermits()` to fetch new data
+
+### Client-Side Filtering Effect
+
+**When:** `allPermits`, `selectedTypes`, `selectedBoroughs`, `search`, `sortField`, or `sortDir` changes
+
+**Where:** `src/PermitMap.tsx:141-183`
+
+**Steps:**
+
+1. **Type filter**: If not all types selected, filter by `job_type`
+2. **Borough filter**: If not all boroughs selected, filter by `borough`
+3. **Search filter**: If search query exists, filter by:
+   - Address (case-insensitive)
+   - Job description (case-insensitive)
+   - Owner business name (case-insensitive)
+   - Applicant business name (case-insensitive)
+4. **Sort**: Sort by selected field and direction:
+   - `date`: Compare `issued_date` strings
+   - `cost`: Parse `estimated_job_costs` as float and compare numerically
+   - `address`: Compare formatted addresses lexicographically
+5. Updates `filtered` state
+6. Calls `updateMapDots(result)` to refresh map layer
+
+## Sub-Components
+
+### DetailRow
+
+```typescript
+function DetailRow({ 
+  label, 
+  value, 
+  mono 
+}: { 
+  label: string; 
+  value?: string; 
+  mono?: boolean 
+}): JSX.Element | null
+```
+
+Renders a labeled field in the detail panel:
+
+<ParamField path="label" type="string" required>
+  Field label (e.g., "Borough", "BIN", "Status")
+</ParamField>
+
+<ParamField path="value" type="string">
+  Field value. If undefined or empty, returns `null` (row not rendered)
+</ParamField>
+
+<ParamField path="mono" type="boolean">
+  If `true`, renders value in monospace font (used for filing numbers)
+</ParamField>
+
+See implementation at `src/PermitMap.tsx:453-461`.
+
+## Permit Layer Styling
+
+The permit markers are rendered as a MapLibre GL circle layer:
+
+```typescript
+map.addLayer({
+  id: 'permit-dots',
+  type: 'circle',
+  source: 'permits',
+  paint: {
+    'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 14, 6, 17, 10],
+    'circle-color': ['get', 'color'],
+    'circle-opacity': 0.85,
+    'circle-stroke-width': 0.5,
+    'circle-stroke-color': 'rgba(0,0,0,0.3)',
+  },
+});
+```
+
+**Dynamic radius:**
+- Zoom 10: 3px
+- Zoom 14: 6px
+- Zoom 17: 10px
+
+See definition at `src/PermitMap.tsx:93-104`.
+
+## UI Components
+
+### Sidebar
+
+The sidebar contains:
+
+1. **Header**: Title + view switcher link to isometric view
+2. **Date range picker**: From/to inputs + quick select buttons (1d, 7d, 30d, 90d)
+3. **Type filter**: Chip grid with color-coded job type buttons
+4. **Borough filter**: Chip row with abbreviated borough names (MN, BK, QN, BX, SI)
+5. **Search input**: Full-text search across address, description, and owner
+6. **Result count bar**: Shows filtered count + warning if capped at 2,500
+7. **Sort bar**: Buttons to sort by date, cost, or address (with asc/desc indicator)
+8. **Permit list**: Scrollable list showing first 500 results (with overflow message)
+
+### Detail Panel
+
+The detail panel (right side on desktop, overlay on mobile) shows:
+
+- Job type header (color-coded)
+- Close button
+- Address and issue date
+- Borough
+- Block/Lot
+- BIN
+- Status
+- Description
+- Estimated cost
+- Owner
+- Applicant
+- Expiration date
+- Filing number (monospace)
+
+### Map Legend
+
+Fixed overlay in bottom-left corner showing:
+
+- NB (New Building)
+- DM (Demolition)
+- GC (General Construction)
+- PL (Plumbing)
+- ME (Mechanical)
+- Other (gray)
+
+Each with a colored dot matching the map markers.
+
+## Usage Example
+
+```tsx
+import PermitMap from './PermitMap';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import './PermitMap.css';
+
+function MapView() {
+  return <PermitMap />;
+}
+
+export default MapView;
+```
+
+<Note>
+  The PermitMap component requires the following CSS files to be imported:
+  - `maplibre-gl/dist/maplibre-gl.css` - MapLibre GL core styles
+  - `./PermitMap.css` - Component-specific styles
+</Note>
+
+## Performance Considerations
+
+1. **Result limit**: Caps API results at 2,500 permits to avoid performance issues
+2. **Client-side filtering**: All filters (type, borough, search, sort) run in the browser after data fetch
+3. **List truncation**: Only renders first 500 permits in the sidebar list (with overflow message)
+4. **GeoJSON source**: Uses MapLibre's native GeoJSON rendering for efficient marker display
+5. **Dynamic circle radius**: Uses MapLibre expressions to scale markers with zoom level
+6. **Memoized callbacks**: Uses `useCallback` for `loadPermits`, `updateMapDots`, and `selectPermit`
+
+## Differences from Isometric View
+
+Compared to the `App` component:
+
+| Feature | PermitMap (MapLibre) | App (OpenSeadragon) |
+|---------|---------------------|---------------------|
+| Base map | CartoDB dark tiles (2D) | Isometric pixel-art NYC |
+| Max permits | 2,500 (API limit) | Unlimited (chunked rendering) |
+| Date picker | Custom from/to inputs | Fixed presets (7d/30d) |
+| Search | Yes (address, description, owner) | No |
+| Sort | Yes (date, cost, address) | No (always date desc) |
+| Virtual scrolling | No (manual truncation at 500) | Yes (react-window) |
+| Helicopters | No | Yes (live layer) |
+| Neighborhood labels | No (CartoDB labels) | Yes (custom LOD labels) |
+| Recency fade | No | Yes (opacity gradient) |
+| Detail view | Side panel + popup | Drawer + tooltip |
+
+## Dependencies
+
+- `react` - Core React library
+- `maplibre-gl` - Open-source map rendering library
+- Custom utilities: `fetchPermits`, `getJobColor`, `getJobLabel`, `formatAddress`, `formatDate`
+- Permit type data: `ALL_JOB_TYPES`, `ALL_BOROUGHS`, `WORK_TYPE_LABELS`, `WORK_TYPE_COLORS`
+
+## See Also
+
+- [App Component](/api/components/app) - OpenSeadragon isometric map view
+- [Permit Data Utilities](/api/utilities/permit-data) - Data fetching and formatting functions

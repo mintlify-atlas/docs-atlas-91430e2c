@@ -1,0 +1,452 @@
+---
+title: 'types.ts'
+description: 'TypeScript type definitions for permits, map config, and application state'
+icon: 'brackets-curly'
+---
+
+The `types.ts` module defines all TypeScript interfaces used throughout the application.
+
+## Interfaces
+
+### Permit
+
+Represents a single DOB permit from the NYC Open Data API (DOB NOW: Build dataset).
+
+```typescript
+export interface Permit {
+  // Identity fields
+  job_filing_number?: string;
+  work_permit?: string;
+  tracking_number?: string;
+  bin?: string;
+  sequence_number?: string;
+
+  // Address fields
+  house_no?: string;
+  street_name?: string;
+  borough?: string;
+  zip_code?: string;
+  block?: string;
+  lot?: string;
+  bbl?: string;
+  community_board?: string;
+  nta?: string;
+  council_district?: string;
+
+  // Work fields
+  work_type?: string;
+  job_type?: string;
+  permit_status?: string;
+  job_description?: string;
+  filing_reason?: string;
+  work_on_floor?: string;
+  estimated_job_costs?: string;
+
+  // Date fields
+  issued_date?: string;
+  approved_date?: string;
+  expired_date?: string;
+
+  // Owner fields
+  owner_name?: string;
+  owner_business_name?: string;
+
+  // Applicant / contractor fields
+  applicant_first_name?: string;
+  applicant_last_name?: string;
+  applicant_business_name?: string;
+  applicant_business_address?: string;
+
+  // Filing representative (expediter) fields
+  filing_representative_first_name?: string;
+  filing_representative_last_name?: string;
+  filing_representative_business_name?: string;
+
+  // Coordinate fields
+  latitude?: string;
+  longitude?: string;
+}
+```
+
+<Note>
+All fields are optional because the DOB dataset has inconsistent data coverage. Always check for existence before accessing.
+</Note>
+
+#### Field Groups
+
+<Expandable title="Identity Fields">
+  <ParamField path="job_filing_number" type="string">
+    Unique job filing identifier (e.g., `"121234567"`)
+  </ParamField>
+  <ParamField path="work_permit" type="string">
+    Work permit number
+  </ParamField>
+  <ParamField path="tracking_number" type="string">
+    Internal DOB tracking number
+  </ParamField>
+  <ParamField path="bin" type="string">
+    Building Identification Number — NYC's unique building ID
+  </ParamField>
+  <ParamField path="sequence_number" type="string">
+    Permit sequence number
+  </ParamField>
+</Expandable>
+
+<Expandable title="Address Fields">
+  <ParamField path="house_no" type="string">
+    Street number (e.g., `"350"`)
+  </ParamField>
+  <ParamField path="street_name" type="string">
+    Street name (e.g., `"5th Ave"`)
+  </ParamField>
+  <ParamField path="borough" type="string">
+    Borough name: `MANHATTAN`, `BROOKLYN`, `QUEENS`, `BRONX`, or `STATEN ISLAND`
+  </ParamField>
+  <ParamField path="zip_code" type="string">
+    ZIP code
+  </ParamField>
+  <ParamField path="block" type="string">
+    Tax block number
+  </ParamField>
+  <ParamField path="lot" type="string">
+    Tax lot number
+  </ParamField>
+  <ParamField path="bbl" type="string">
+    Borough-Block-Lot identifier (10 digits: 1 + 5 + 4)
+  </ParamField>
+  <ParamField path="community_board" type="string">
+    Community board district
+  </ParamField>
+  <ParamField path="nta" type="string">
+    Neighborhood Tabulation Area name (e.g., `"Fort Greene"`)
+  </ParamField>
+  <ParamField path="council_district" type="string">
+    NYC Council district number
+  </ParamField>
+</Expandable>
+
+<Expandable title="Work Fields">
+  <ParamField path="work_type" type="string">
+    Verbose work type from DOB (e.g., `"General Construction"`, `"Full Demolition"`)
+  </ParamField>
+  <ParamField path="job_type" type="string">
+    Normalized job type code: `NB`, `DM`, `GC`, `PL`, `ME`, `SOL`, `SHD`, `SCF`, `FNC`, `SG`, `FND`, `STR`, `BLR`, `SPR`, `EW`, `ANT`, `CC`, `STP`, or `OTH`
+    
+    **Note**: This is derived client-side via `workTypeToCode()` and not present in the raw API response.
+  </ParamField>
+  <ParamField path="permit_status" type="string">
+    Current permit status (e.g., `"ISSUED"`, `"EXPIRED"`)
+  </ParamField>
+  <ParamField path="job_description" type="string">
+    Free-text job description from applicant
+  </ParamField>
+  <ParamField path="filing_reason" type="string">
+    Reason for filing (e.g., `"ALTERATION"`, `"NEW BUILDING"`)
+  </ParamField>
+  <ParamField path="work_on_floor" type="string">
+    Floors affected by work (e.g., `"1-3"`, `"ROOF"`)
+  </ParamField>
+  <ParamField path="estimated_job_costs" type="string">
+    Estimated cost in dollars (as string, e.g., `"150000"`)
+  </ParamField>
+</Expandable>
+
+<Expandable title="Date Fields">
+  <ParamField path="issued_date" type="string">
+    Date permit was issued (ISO format: `"2026-02-24T00:00:00.000"`)
+  </ParamField>
+  <ParamField path="approved_date" type="string">
+    Date job was approved (ISO format: `"2026-02-24T00:00:00.000"`)
+    
+    **Note**: For Job Filings dataset, this is the primary date field.
+  </ParamField>
+  <ParamField path="expired_date" type="string">
+    Date permit expires (ISO format: `"2026-08-24T00:00:00.000"`)
+  </ParamField>
+</Expandable>
+
+<Expandable title="Owner Fields">
+  <ParamField path="owner_name" type="string">
+    Individual owner name
+  </ParamField>
+  <ParamField path="owner_business_name" type="string">
+    Business entity owner name
+  </ParamField>
+</Expandable>
+
+<Expandable title="Applicant / Contractor Fields">
+  <ParamField path="applicant_first_name" type="string">
+    Applicant first name
+  </ParamField>
+  <ParamField path="applicant_last_name" type="string">
+    Applicant last name
+  </ParamField>
+  <ParamField path="applicant_business_name" type="string">
+    Contractor business name
+  </ParamField>
+  <ParamField path="applicant_business_address" type="string">
+    Contractor business address
+  </ParamField>
+</Expandable>
+
+<Expandable title="Filing Representative (Expediter) Fields">
+  <ParamField path="filing_representative_first_name" type="string">
+    Expediter first name
+  </ParamField>
+  <ParamField path="filing_representative_last_name" type="string">
+    Expediter last name
+  </ParamField>
+  <ParamField path="filing_representative_business_name" type="string">
+    Expediter business name
+  </ParamField>
+</Expandable>
+
+<Expandable title="Coordinate Fields">
+  <ParamField path="latitude" type="string">
+    Latitude in decimal degrees (as string, e.g., `"40.748400"`)
+  </ParamField>
+  <ParamField path="longitude" type="string">
+    Longitude in decimal degrees (as string, e.g., `"-73.985700"`)
+    
+    **Note**: Always validate with `parseFloat()` and `isNaN()` check before use.
+  </ParamField>
+</Expandable>
+
+#### Example Usage
+
+```typescript
+import type { Permit } from './types';
+import { formatAddress, formatDate, getJobLabel } from './permits';
+
+function displayPermit(permit: Permit) {
+  // Safe field access with fallbacks
+  const address = formatAddress(permit);
+  const date = formatDate(permit.issued_date ?? permit.approved_date);
+  const jobLabel = getJobLabel(permit.job_type ?? 'OTH');
+  const cost = permit.estimated_job_costs 
+    ? `$${Number(permit.estimated_job_costs).toLocaleString()}`
+    : 'N/A';
+  
+  console.log(`${jobLabel} - ${address}`);
+  console.log(`Issued: ${date}`);
+  console.log(`Estimated Cost: ${cost}`);
+  
+  // Check for optional fields
+  if (permit.job_description) {
+    console.log(`Description: ${permit.job_description}`);
+  }
+  
+  // Parse coordinates
+  const lat = parseFloat(permit.latitude ?? '');
+  const lng = parseFloat(permit.longitude ?? '');
+  
+  if (!isNaN(lat) && !isNaN(lng)) {
+    console.log(`Location: ${lat}, ${lng}`);
+  }
+}
+```
+
+---
+
+### MapConfig
+
+Configuration for the isometric map projection system.
+
+```typescript
+export interface MapConfig {
+  seed: { lat: number; lng: number };
+  camera_azimuth_degrees: number;
+  camera_elevation_degrees: number;
+  width_px: number;
+  height_px: number;
+  view_height_meters: number;
+  tile_step: number;
+}
+```
+
+<ParamField path="seed" type="{ lat: number; lng: number }" required>
+  Geographic seed point for coordinate projection (Empire State Building area)
+</ParamField>
+
+<ParamField path="camera_azimuth_degrees" type="number" required>
+  Camera rotation angle in degrees. -15° = slight counter-clockwise rotation
+</ParamField>
+
+<ParamField path="camera_elevation_degrees" type="number" required>
+  Camera elevation angle in degrees. -45° = isometric view
+</ParamField>
+
+<ParamField path="width_px" type="number" required>
+  Quadrant width in pixels (1024px)
+</ParamField>
+
+<ParamField path="height_px" type="number" required>
+  Quadrant height in pixels (1024px)
+</ParamField>
+
+<ParamField path="view_height_meters" type="number" required>
+  Real-world height in meters covered by each quadrant (300m)
+</ParamField>
+
+<ParamField path="tile_step" type="number" required>
+  Tile step multiplier. 0.5 = 512px quadrants from 1024px tiles
+</ParamField>
+
+#### Example Usage
+
+```typescript
+import type { MapConfig } from './types';
+import { MAP_CONFIG } from './coordinates';
+
+// Use the default config
+function getMetersPerPixel(config: MapConfig): number {
+  return config.view_height_meters / config.height_px;
+}
+
+const mpp = getMetersPerPixel(MAP_CONFIG);
+console.log(`Meters per pixel: ${mpp.toFixed(3)}`);
+// Output: Meters per pixel: 0.293
+```
+
+---
+
+### FilterState
+
+Application filter state for permit filtering.
+
+```typescript
+export interface FilterState {
+  jobTypes: Set<string>;
+  boroughs: Set<string>;
+  daysBack: number;
+}
+```
+
+<ParamField path="jobTypes" type="Set<string>" required>
+  Set of selected job type codes (e.g., `new Set(['NB', 'GC', 'PL'])`)
+</ParamField>
+
+<ParamField path="boroughs" type="Set<string>" required>
+  Set of selected borough names (e.g., `new Set(['MANHATTAN', 'BROOKLYN'])`)
+</ParamField>
+
+<ParamField path="daysBack" type="number" required>
+  Number of days of permit history to fetch (typically 7 or 30)
+</ParamField>
+
+#### Example Usage
+
+```typescript
+import { useState, useMemo } from 'react';
+import type { Permit, FilterState } from './types';
+import { ALL_JOB_TYPES } from './permits';
+
+function usePermitFilters(permits: Permit[]) {
+  const [filters, setFilters] = useState<FilterState>({
+    jobTypes: new Set(ALL_JOB_TYPES),
+    boroughs: new Set(['MANHATTAN']),
+    daysBack: 7,
+  });
+  
+  const filteredPermits = useMemo(() => {
+    return permits.filter(permit => {
+      const jobType = permit.job_type?.toUpperCase() ?? 'OTHER';
+      const borough = permit.borough?.toUpperCase() ?? '';
+      
+      const jobMatch = filters.jobTypes.has(jobType);
+      const boroughMatch = filters.boroughs.has(borough);
+      
+      return jobMatch && boroughMatch;
+    });
+  }, [permits, filters]);
+  
+  // Toggle a job type
+  const toggleJobType = (jt: string) => {
+    setFilters(prev => {
+      const next = new Set(prev.jobTypes);
+      next.has(jt) ? next.delete(jt) : next.add(jt);
+      return { ...prev, jobTypes: next };
+    });
+  };
+  
+  // Toggle a borough
+  const toggleBorough = (b: string) => {
+    setFilters(prev => {
+      const next = new Set(prev.boroughs);
+      next.has(b) ? next.delete(b) : next.add(b);
+      return { ...prev, boroughs: next };
+    });
+  };
+  
+  return { filters, filteredPermits, toggleJobType, toggleBorough };
+}
+```
+
+---
+
+## Data Sources
+
+### DOB NOW Datasets
+
+The `Permit` interface models data from two NYC Open Data datasets:
+
+#### 1. DOB NOW: Build – Approved Permits (`rbx6-tga4`)
+
+- **Work-type permits**: GC, PL, Mechanical, Solar, Scaffold, etc.
+- **Excludes**: New Building and Full Demolition
+- **Update frequency**: Daily
+
+#### 2. DOB NOW: Build – Job Filings (`w9ak-ipjd`)
+
+- **Job-level filings**: New Building, Full Demolition, Alteration
+- **Primary use**: NB and DM permits only
+- **Update frequency**: Daily
+
+<Note>
+Both datasets are normalized by `fetchPermits()` into a unified `Permit[]` array with consistent `job_type` codes.
+</Note>
+
+---
+
+## Type Safety Best Practices
+
+```typescript
+import type { Permit } from './types';
+
+// ✓ Always check for undefined
+function safeAccess(permit: Permit) {
+  const lat = parseFloat(permit.latitude ?? '');
+  const lng = parseFloat(permit.longitude ?? '');
+  
+  if (isNaN(lat) || isNaN(lng)) {
+    console.warn('Invalid coordinates');
+    return null;
+  }
+  
+  return { lat, lng };
+}
+
+// ✓ Use optional chaining
+function getOwner(permit: Permit): string | null {
+  return permit.owner_business_name 
+    ?? permit.owner_name 
+    ?? null;
+}
+
+// ✓ Type-safe filtering
+function filterByBorough(
+  permits: Permit[], 
+  borough: string
+): Permit[] {
+  return permits.filter(p => 
+    p.borough?.toUpperCase() === borough.toUpperCase()
+  );
+}
+
+// ✗ Avoid assuming fields exist
+function unsafeAccess(permit: Permit) {
+  // Don't do this!
+  const lat = parseFloat(permit.latitude);  // Type error if undefined
+  const name = permit.owner_name.toUpperCase();  // Runtime error if undefined
+}
+```

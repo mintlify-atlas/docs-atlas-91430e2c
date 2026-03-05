@@ -1,0 +1,296 @@
+---
+title: 'Helicopter Data'
+description: 'Fetch live helicopter positions from ADS-B Exchange API'
+---
+
+## Overview
+
+The helicopter data integration fetches real-time aircraft positions from ADS-B Exchange (adsb.lol) and filters for helicopters operating over New York City. The system polls every 12 seconds and displays up to 10 helicopters on the map.
+
+## fetchHelicopters()
+
+Fetches live helicopter positions within a 25 nautical mile radius of NYC.
+
+```typescript src/helicopters.ts
+export async function fetchHelicopters(): Promise<HelicopterState[]>
+```
+
+### Returns
+
+Returns a `Promise<HelicopterState[]>` containing up to 10 helicopters, sorted by altitude (lowest first).
+
+### Implementation Details
+
+#### Search Parameters
+
+```typescript src/helicopters.ts
+const NYC_LAT = 40.75;
+const NYC_LON = -74.00;
+const DIST_NM = 25;        // Nautical miles radius
+const MAX_HELIS = 10;      // Maximum helicopters to display
+```
+
+The 25 NM radius covers all five boroughs plus surrounding airspace (Newark, JFK, LaGuardia approach paths).
+
+#### ADS-B Exchange API Endpoint
+
+The function uses a proximity-based API endpoint:
+
+```typescript src/helicopters.ts
+const res = await fetch(
+  `/api/adsb/lat/${NYC_LAT}/lon/${NYC_LON}/dist/${DIST_NM}`,
+  { cache: 'no-store' }
+);
+```
+
+This proxies to `https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{dist}` in production.
+
+<Note>
+  The `cache: 'no-store'` option ensures fresh data on every poll. ADS-B data updates every 1-2 seconds from ground stations.
+</Note>
+
+#### Helicopter Type Filtering
+
+Aircraft are filtered using ICAO type designators. The `HELI_TYPES` set contains known helicopter models:
+
+```typescript src/helicopters.ts
+const HELI_TYPES = new Set([
+  'H25B','H500','H60','H64','H69','H72','H76','H47',           // Military designators
+  'B06','B06X','B07','B212','B222','B230','B407','B412',       // Bell
+  'B427','B429','B430','B47G','B47J',
+  'EC20','EC25','EC30','EC35','EC45','EC55','EC75',            // Eurocopter/Airbus
+  'AS32','AS35','AS50','AS55','AS65',
+  'S300','S330','S333','S61','S64','S70','S76','S92',          // Sikorsky
+  'R22','R44','R66',                                           // Robinson
+  'AW09','AW19','AW89','AW01','AW39',                          // AgustaWestland
+  'MD52','MD60','MD83',                                        // MD Helicopters
+  'EN28','EN48',                                               // Enstrom
+  'K126','K135','K232',                                        // Kaman
+]);
+```
+
+Filtering logic:
+
+```typescript src/helicopters.ts
+const helis = ac.filter(a => {
+  const t: string = (a.t ?? '').toUpperCase();
+  const isHeliType = HELI_TYPES.has(t) || t.startsWith('H');
+  const notGround = a.alt_baro !== 'ground' && typeof a.alt_baro === 'number';
+  return isHeliType && notGround && a.lat && a.lon;
+});
+```
+
+**Filter conditions:**
+1. Type code is in `HELI_TYPES` **OR** starts with `'H'` (catches military variants)
+2. Not on the ground (`alt_baro !== 'ground'` and is numeric)
+3. Has valid latitude and longitude
+
+#### Altitude-Based Sorting
+
+Helicopters are sorted by altitude (ascending) to prioritize low-flying aircraft:
+
+```typescript src/helicopters.ts
+helis.sort((a, b) => (a.alt_baro ?? 9999) - (b.alt_baro ?? 9999));
+```
+
+<Note>
+  Lower altitude helicopters are more visually interesting on the isometric map — they appear closer to buildings and are likely doing scenic tours, news coverage, or police operations.
+</Note>
+
+#### Response Mapping
+
+The top 10 helicopters are mapped to the simplified `HelicopterState` interface:
+
+```typescript src/helicopters.ts
+return helis.slice(0, MAX_HELIS).map(a => ({
+  hex: a.hex,
+  lat: a.lat,
+  lon: a.lon,
+  alt: typeof a.alt_baro === 'number' ? a.alt_baro : 0,
+  track: typeof a.track === 'number' ? a.track : 0,
+  gs: typeof a.gs === 'number' ? a.gs : 0,
+}));
+```
+
+### Error Handling
+
+The function returns an empty array on any error:
+
+```typescript src/helicopters.ts
+try {
+  // ... fetch logic
+} catch {
+  return [];
+}
+```
+
+This ensures the map continues to function even if the ADS-B API is unavailable.
+
+### Example Response
+
+<CodeGroup>
+```typescript Usage
+const helicopters = await fetchHelicopters();
+console.log(`${helicopters.length} helicopters over NYC`);
+
+helicopters.forEach(h => {
+  console.log(`${h.hex}: ${h.alt}ft @ ${h.gs}kts`);
+});
+```
+
+```json Response
+[
+  {
+    "hex": "a12b34",
+    "lat": 40.7489,
+    "lon": -73.9680,
+    "alt": 1200,
+    "track": 135,
+    "gs": 95
+  },
+  {
+    "hex": "c56d78",
+    "lat": 40.7128,
+    "lon": -74.0060,
+    "alt": 1500,
+    "track": 270,
+    "gs": 110
+  }
+]
+```
+</CodeGroup>
+
+---
+
+## HelicopterState Interface
+
+Simplified helicopter state for map rendering.
+
+```typescript src/helicopters.ts
+export interface HelicopterState {
+  hex: string;      // ICAO 24-bit address (unique aircraft ID)
+  lat: number;      // Latitude (decimal degrees)
+  lon: number;      // Longitude (decimal degrees)
+  alt: number;      // Altitude in feet (barometric)
+  track: number;    // Track angle in degrees (0=N, 90=E, 180=S, 270=W)
+  gs: number;       // Ground speed in knots
+}
+```
+
+### Field Descriptions
+
+<ResponseField name="hex" type="string" required>
+  ICAO 24-bit address in hexadecimal. Globally unique aircraft identifier assigned by country of registration.
+  
+  Example: `"a12b34"` for a US-registered aircraft (US addresses start with `a`)
+</ResponseField>
+
+<ResponseField name="lat" type="number" required>
+  Latitude in decimal degrees. Positive values are north of the equator.
+  
+  Range: `-90` to `90`
+</ResponseField>
+
+<ResponseField name="lon" type="number" required>
+  Longitude in decimal degrees. Negative values are west of the prime meridian.
+  
+  Range: `-180` to `180`
+</ResponseField>
+
+<ResponseField name="alt" type="number" required>
+  Barometric altitude in feet above mean sea level (MSL).
+  
+  NYC helicopters typically operate between 500-2000 feet.
+</ResponseField>
+
+<ResponseField name="track" type="number" required>
+  Track angle (direction of movement) in degrees.
+  
+  - `0` = North
+  - `90` = East
+  - `180` = South
+  - `270` = West
+</ResponseField>
+
+<ResponseField name="gs" type="number" required>
+  Ground speed in knots (nautical miles per hour).
+  
+  Typical helicopter cruise speed: 80-120 knots
+</ResponseField>
+
+---
+
+## Polling Strategy
+
+The helicopter data is polled on a **12-second interval** in the main application:
+
+```typescript Example: App polling loop
+const HELI_POLL_INTERVAL = 12_000;  // 12 seconds
+
+useEffect(() => {
+  const updateHelicopters = async () => {
+    const helis = await fetchHelicopters();
+    setHelicopters(helis);
+  };
+
+  updateHelicopters();  // Initial fetch
+  const interval = setInterval(updateHelicopters, HELI_POLL_INTERVAL);
+  
+  return () => clearInterval(interval);
+}, []);
+```
+
+<Warning>
+  Do not poll more frequently than every 10 seconds — ADS-B Exchange rate-limits aggressive clients and the data doesn't update fast enough to justify higher frequency.
+</Warning>
+
+### Why 12 Seconds?
+
+1. **API freshness**: ADS-B data updates every 1-2 seconds, but aircraft positions don't change dramatically in 10-12 seconds
+2. **Rate limiting**: Respectful polling interval that avoids triggering API rate limits
+3. **Performance**: Reduces unnecessary re-renders and network traffic
+4. **Visual smoothness**: Fast enough for real-time feel, slow enough to avoid jitter
+
+---
+
+## Data Source
+
+**ADS-B Exchange** (adsb.lol) is a community-driven aggregator of ADS-B (Automatic Dependent Surveillance-Broadcast) data from volunteer ground stations worldwide.
+
+### How ADS-B Works
+
+1. Aircraft continuously broadcast their position, altitude, speed, and heading via 1090 MHz radio
+2. Ground stations receive these broadcasts and forward them to aggregators
+3. ADS-B Exchange provides a free API to query aircraft positions by geographic area
+
+### Coverage
+
+NYC has excellent ADS-B coverage due to:
+- Multiple volunteer ground stations in Manhattan, Brooklyn, Queens, NJ
+- FAA ground stations at JFK, LaGuardia, Newark
+- High population density = more receivers
+
+<Note>
+  Coverage is nearly 100% for aircraft above 500 feet in the NYC metro area. Very low-altitude helicopters (below 300 feet) may have intermittent coverage.
+</Note>
+
+---
+
+## Common Helicopter Types Over NYC
+
+| Type Code | Manufacturer | Model | Common Use |
+|-----------|--------------|-------|------------|
+| **R44**   | Robinson     | R44   | Tours, training, news |
+| **R66**   | Robinson     | R66   | Tours, corporate |
+| **B407**  | Bell         | 407   | Corporate, EMS |
+| **B429**  | Bell         | 429   | Corporate, VIP |
+| **S76**   | Sikorsky     | S-76  | Corporate, offshore |
+| **EC35**  | Airbus       | H135  | EMS, police (NYPD) |
+| **EC45**  | Airbus       | H145  | EMS, corporate |
+| **AS50**  | Airbus       | AS350 | Tours, utility |
+
+---
+
+## Related
+
+See [Map Rendering](/api/rendering/helicopter-rendering) for how helicopter positions are converted to isometric coordinates and animated on the map.

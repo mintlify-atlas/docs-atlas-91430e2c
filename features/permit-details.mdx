@@ -1,0 +1,466 @@
+---
+title: Permit Detail Drawer
+description: Comprehensive permit information display with external links and formatted metadata
+---
+
+The permit detail drawer shows all available information about a selected permit, including work description, dates, costs, parties involved, and external links to city databases.
+
+## Architecture
+
+The drawer is a modal component that slides in from the right side of the screen:
+
+```tsx
+// App.tsx:80-222
+function PermitDrawer({ permit, onClose }: { permit: Permit; onClose: () => void }) {
+  const color = getJobColor(permit.job_type ?? '');
+  // ... data extraction
+  return (
+    <div className="drawer" style={{ '--drawer-color': color } as React.CSSProperties}>
+      {/* ... drawer content */}
+    </div>
+  );
+}
+```
+
+### Trigger Logic
+
+```tsx
+// App.tsx:291, 753-755
+const [drawerPermit, setDrawerPermit] = useState<Permit | null>(null);
+
+{drawerPermit && (
+  <PermitDrawer permit={drawerPermit} onClose={() => { setDrawerPermit(null); setSelectedPermit(null); }} />
+)}
+```
+
+The drawer opens when:
+- User clicks a permit marker (App.tsx:542)
+- User clicks a row in the permit list (App.tsx:246)
+
+## Header Section
+
+The header displays permit type with emoji and color coding:
+
+```tsx
+// App.tsx:96-102
+<div className="drawer-header">
+  <div className="drawer-type" style={{ color }}>
+    {getJobEmoji(permit.job_type ?? '')} {getJobLabel(permit.job_type ?? '')}
+  </div>
+  <button className="drawer-close" onClick={onClose}>✕</button>
+</div>
+```
+
+### Dynamic Color Theming
+
+The drawer uses a CSS custom property for accent color:
+
+```tsx
+// App.tsx:96
+<div className="drawer" style={{ '--drawer-color': color } as React.CSSProperties}>
+```
+
+This allows the entire drawer UI to match the permit type color without duplicating color values.
+
+## Address Display
+
+Address formatting combines house number, street name, and borough:
+
+```tsx
+// App.tsx:104-107
+<div className="drawer-address">{formatAddress(permit)}</div>
+<div className="drawer-location">
+  {[neighborhood, permit.borough, permit.zip_code].filter(Boolean).join(' · ')}
+</div>
+```
+
+### Format Function
+
+```tsx
+// permits.ts:198-201
+export function formatAddress(permit: Permit): string {
+  return [permit.house_no, permit.street_name, permit.borough]
+    .filter(Boolean).join(' ') || 'Unknown address';
+}
+```
+
+<Note>
+The `filter(Boolean)` pattern removes null/undefined/empty values, preventing output like "123  Brooklyn" when street name is missing.
+</Note>
+
+## Job Description
+
+Long-form work description is shown in a dedicated section:
+
+```tsx
+// App.tsx:109-117
+{permit.job_description && (
+  <>
+    <div className="drawer-divider" />
+    <div className="drawer-field">
+      <div className="drawer-field-label">DESCRIPTION</div>
+      <div className="drawer-field-value drawer-description">{permit.job_description}</div>
+    </div>
+  </>
+)}
+```
+
+Example descriptions:
+- "GENERAL CONSTRUCTION - ALTERATION TO EXISTING 3 STORY BUILDING"
+- "INSTALL SOLAR PHOTOVOLTAIC SYSTEM ON ROOFTOP"
+- "ERECT NEW 12 STORY MIXED USE BUILDING"
+
+## Metadata Grid
+
+Permit details are displayed in a responsive two-column grid:
+
+```tsx
+// App.tsx:119-157
+<div className="drawer-grid">
+  {permit.filing_reason && (
+    <div className="drawer-field">
+      <div className="drawer-field-label">FILING TYPE</div>
+      <div className="drawer-field-value">{permit.filing_reason}</div>
+    </div>
+  )}
+  {permit.permit_status && (
+    <div className="drawer-field">
+      <div className="drawer-field-label">STATUS</div>
+      <div className="drawer-field-value">{permit.permit_status}</div>
+    </div>
+  )}
+  {permit.issued_date && (
+    <div className="drawer-field">
+      <div className="drawer-field-label">ISSUED</div>
+      <div className="drawer-field-value">{formatDate(permit.issued_date)}</div>
+    </div>
+  )}
+  {permit.expired_date && (
+    <div className="drawer-field">
+      <div className="drawer-field-label">EXPIRES</div>
+      <div className="drawer-field-value">{formatDate(permit.expired_date)}</div>
+    </div>
+  )}
+  {cost && (
+    <div className="drawer-field">
+      <div className="drawer-field-label">EST. COST</div>
+      <div className="drawer-field-value drawer-cost">{cost}</div>
+    </div>
+  )}
+  {permit.work_on_floor && (
+    <div className="drawer-field">
+      <div className="drawer-field-label">FLOORS</div>
+      <div className="drawer-field-value">{permit.work_on_floor}</div>
+    </div>
+  )}
+</div>
+```
+
+### Date Formatting
+
+```tsx
+// permits.ts:203-210
+export function formatDate(dateStr?: string): string {
+  if (!dateStr) return '';
+  try {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+  } catch { return dateStr; }
+}
+```
+
+Output format: "Feb 24, 2026"
+
+### Cost Formatting
+
+```tsx
+// App.tsx:82-84
+const cost = permit.estimated_job_costs && Number(permit.estimated_job_costs) > 0
+  ? `$${Number(permit.estimated_job_costs).toLocaleString()}`
+  : null;
+```
+
+<Tip>
+Using `toLocaleString()` adds thousand separators: `$1,250,000` instead of `$1250000`.
+</Tip>
+
+## Parties Involved
+
+Owner, contractor, and expediter information is extracted with fallback logic:
+
+### Owner Extraction
+
+```tsx
+// App.tsx:85-87
+const JUNK = ['PR', 'Not Applicable', 'N/A', ''];
+const cleanOwner = [permit.owner_business_name, permit.owner_name]
+  .find(v => v && !JUNK.includes(v)) ?? null;
+```
+
+This prioritizes business name over personal name and filters out placeholder values.
+
+### Contractor Extraction
+
+```tsx
+// App.tsx:88-89
+const contractor = [permit.applicant_business_name, permit.applicant_first_name, permit.applicant_last_name]
+  .filter(Boolean).join(' · ') || null;
+```
+
+Example output: "ABC Construction · John · Doe" or "XYZ Builders Inc."
+
+### Expediter Extraction
+
+```tsx
+// App.tsx:90-92
+const expediter = permit.filing_representative_business_name
+  || [permit.filing_representative_first_name, permit.filing_representative_last_name].filter(Boolean).join(' ')
+  || null;
+```
+
+<Accordion title="What is an expediter?">
+An expediter (filing representative) is a licensed professional who navigates the DOB permit approval process on behalf of the applicant. They handle paperwork, coordinate with city agencies, and ensure compliance with building codes.
+
+Expediters are common for complex projects where specialized knowledge of NYC building regulations is required.
+</Accordion>
+
+### Display Logic
+
+```tsx
+// App.tsx:159-181
+{cleanOwner && (
+  <>
+    <div className="drawer-divider" />
+    <div className="drawer-field">
+      <div className="drawer-field-label">OWNER</div>
+      <div className="drawer-field-value">{cleanOwner}</div>
+    </div>
+  </>
+)}
+
+{contractor && (
+  <div className="drawer-field">
+    <div className="drawer-field-label">CONTRACTOR</div>
+    <div className="drawer-field-value">{contractor}</div>
+  </div>
+)}
+
+{expediter && (
+  <div className="drawer-field">
+    <div className="drawer-field-label">EXPEDITER</div>
+    <div className="drawer-field-value drawer-muted">{expediter}</div>
+  </div>
+)}
+```
+
+## Filing Metadata
+
+Administrative identifiers are shown in a condensed row:
+
+```tsx
+// App.tsx:183-194
+<div className="drawer-meta-row">
+  {permit.job_filing_number && (
+    <span className="drawer-meta-item">Filing: {permit.job_filing_number}</span>
+  )}
+  {permit.bin && (
+    <span className="drawer-meta-item">BIN: {permit.bin}</span>
+  )}
+  {permit.community_board && (
+    <span className="drawer-meta-item">CB: {permit.community_board}</span>
+  )}
+</div>
+```
+
+- **Filing Number**: DOB tracking ID (e.g. "121234567")
+- **BIN**: Building Identification Number (7-digit unique building ID)
+- **CB**: Community Board district (e.g. "Manhattan 5")
+
+## External Links
+
+Four deep links connect to NYC government and mapping services:
+
+```tsx
+// App.tsx:196-219
+<div className="drawer-links">
+  {permit.bin && (
+    <a className="drawer-link" href={`https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?bin=${permit.bin}`} target="_blank" rel="noopener noreferrer">
+      🏛 DOB BIS
+    </a>
+  )}
+  {permit.bbl && (
+    <a className="drawer-link" href={`https://zola.planning.nyc.gov/l/lot/${permit.bbl.slice(0,1)}/${permit.bbl.slice(1,6)}/${permit.bbl.slice(6)}`} target="_blank" rel="noopener noreferrer">
+      🗺 ZoLa
+    </a>
+  )}
+  {permit.latitude && permit.longitude && (
+    <a className="drawer-link" href={`https://www.google.com/maps?q=${permit.latitude},${permit.longitude}`} target="_blank" rel="noopener noreferrer">
+      📍 Maps
+    </a>
+  )}
+  {permit.latitude && permit.longitude && (
+    <a className="drawer-link" href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${permit.latitude},${permit.longitude}`} target="_blank" rel="noopener noreferrer">
+      🚶 Street View
+    </a>
+  )}
+</div>
+```
+
+### DOB BIS (Building Information System)
+
+Links to the official DOB property profile using BIN:
+
+```
+https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?bin=1234567
+```
+
+Shows:
+- Full permit history
+- Violations and complaints
+- Building specifications
+- Elevator inspections
+- Zoning information
+
+### ZoLa (Zoning & Land Use Map)
+
+Links to NYC Planning's interactive map using BBL (Borough-Block-Lot):
+
+```tsx
+// BBL format: 1-digit borough + 5-digit block + 4-digit lot
+const borough = permit.bbl.slice(0, 1);  // "1" = Manhattan
+const block = permit.bbl.slice(1, 6);    // "00123"
+const lot = permit.bbl.slice(6);         // "0045"
+```
+
+```
+https://zola.planning.nyc.gov/l/lot/1/00123/0045
+```
+
+Shows:
+- Zoning district
+- Tax lot boundaries
+- Historic districts
+- Flood zones
+- Subway proximity
+
+### Google Maps
+
+Standard map view centered on the permit location:
+
+```
+https://www.google.com/maps?q=40.7549,-73.9840
+```
+
+### Google Street View
+
+Pano view at the permit address:
+
+```
+https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=40.7549,-73.9840
+```
+
+<Note>
+All external links use `target="_blank" rel="noopener noreferrer"` to open in new tabs and prevent security issues.
+</Note>
+
+## Conditional Rendering
+
+All fields use conditional rendering to hide missing data:
+
+```tsx
+{permit.job_description && (
+  // ... description section
+)}
+
+{cost && (
+  // ... cost field
+)}
+```
+
+This ensures the drawer adapts to sparse datasets without showing empty labels.
+
+## Mobile Responsiveness
+
+The drawer spans full width on mobile and slides in from the bottom:
+
+```css
+@media (max-width: 768px) {
+  .drawer {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+    max-height: 70vh;
+  }
+}
+```
+
+## Close Behavior
+
+Closing the drawer clears both drawer state and selected permit:
+
+```tsx
+// App.tsx:754
+onClose={() => { setDrawerPermit(null); setSelectedPermit(null); }}
+```
+
+This removes the highlight from the map marker and list row.
+
+## Data Source
+
+All fields map to the `Permit` interface:
+
+```tsx
+// types.ts:13-65
+export interface Permit {
+  // Identity
+  job_filing_number?: string;
+  work_permit?: string;
+  bin?: string;
+  bbl?: string;
+  
+  // Address
+  house_no?: string;
+  street_name?: string;
+  borough?: string;
+  zip_code?: string;
+  nta?: string;  // neighborhood name
+  
+  // Work
+  work_type?: string;
+  job_type?: string;
+  permit_status?: string;
+  job_description?: string;
+  filing_reason?: string;
+  work_on_floor?: string;
+  estimated_job_costs?: string;
+  
+  // Dates
+  issued_date?: string;
+  approved_date?: string;
+  expired_date?: string;
+  
+  // Owner
+  owner_name?: string;
+  owner_business_name?: string;
+  
+  // Applicant / contractor
+  applicant_first_name?: string;
+  applicant_last_name?: string;
+  applicant_business_name?: string;
+  
+  // Filing representative (expediter)
+  filing_representative_first_name?: string;
+  filing_representative_last_name?: string;
+  filing_representative_business_name?: string;
+  
+  // Coordinates
+  latitude?: string;
+  longitude?: string;
+}
+```
+
+<Tip>
+All fields are optional because the DOB datasets are notoriously incomplete. Defensive coding with optional chaining and fallback values prevents runtime errors.
+</Tip>

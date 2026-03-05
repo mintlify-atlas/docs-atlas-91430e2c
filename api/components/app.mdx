@@ -1,0 +1,407 @@
+---
+title: App Component
+description: Main React component for NYC Permit Pulse isometric map view
+---
+
+The `App` component is the primary React component for the NYC Permit Pulse isometric map view. It orchestrates the OpenSeadragon viewer, permit data management, filtering, and all UI interactions including the sidebar, permit list, and detail drawer.
+
+## Component Structure
+
+The `App` component is defined in `src/App.tsx` and serves as the root component for the isometric map experience.
+
+```typescript
+export default function App(): JSX.Element
+```
+
+## State Management
+
+The component uses React hooks to manage comprehensive application state:
+
+### Map State
+
+<ParamField path="viewerRef" type="React.RefObject<HTMLDivElement>">
+  Reference to the DOM element that hosts the OpenSeadragon viewer
+</ParamField>
+
+<ParamField path="osdRef" type="React.RefObject<OpenSeadragon.Viewer | null>">
+  Reference to the OpenSeadragon viewer instance
+</ParamField>
+
+<ParamField path="overlayMarkersRef" type="React.RefObject<Map<string, HTMLElement>>">
+  Map of permit marker elements by key (e.g., `job-{filing_number}`)
+</ParamField>
+
+<ParamField path="labelsRef" type="React.RefObject<NeighborhoodLabels | null>">
+  Reference to the NeighborhoodLabels overlay manager
+</ParamField>
+
+<ParamField path="heliOverlaysRef" type="React.RefObject<Map<string, HTMLElement>>">
+  Map of helicopter marker elements by hex identifier
+</ParamField>
+
+### Data State
+
+<ParamField path="permits" type="Permit[]">
+  Complete array of permits loaded from the API
+</ParamField>
+
+<ParamField path="filteredPermits" type="Permit[]">
+  Memoized array of permits after applying job type and borough filters
+</ParamField>
+
+<ParamField path="sortedPermits" type="Permit[]">
+  Memoized array of filtered permits sorted by date (most recent first)
+</ParamField>
+
+<ParamField path="loading" type="boolean">
+  True when permit data is being fetched
+</ParamField>
+
+<ParamField path="error" type="string | null">
+  Error message if permit data fetch fails
+</ParamField>
+
+### UI State
+
+<ParamField path="tooltip" type="{ permit: Permit; x: number; y: number } | null">
+  Tooltip state for marker hover, includes permit data and screen coordinates
+</ParamField>
+
+<ParamField path="drawerPermit" type="Permit | null">
+  Currently selected permit shown in the detail drawer
+</ParamField>
+
+<ParamField path="selectedPermit" type="Permit | null">
+  Currently selected permit in the list (for highlighting)
+</ParamField>
+
+<ParamField path="dziLoaded" type="boolean">
+  True when the Deep Zoom Image (DZI) tileset has loaded
+</ParamField>
+
+<ParamField path="overlayOn" type="boolean">
+  Whether permit markers are visible on the map
+</ParamField>
+
+<ParamField path="filtersOpen" type="boolean">
+  Whether the filters section in the sidebar is expanded
+</ParamField>
+
+<ParamField path="permitsOpen" type="boolean">
+  Whether the permits list section in the sidebar is expanded
+</ParamField>
+
+<ParamField path="infoOpen" type="boolean">
+  Whether the info modal is visible
+</ParamField>
+
+<ParamField path="mobileSidebarOpen" type="boolean">
+  Whether the sidebar is open on mobile devices
+</ParamField>
+
+### Filter State
+
+<ParamField path="filters" type="FilterState">
+  Current filter configuration object
+  
+  ```typescript
+  interface FilterState {
+    jobTypes: Set<string>;    // Selected job types (NB, DM, GC, etc.)
+    boroughs: Set<string>;    // Selected boroughs (MANHATTAN, BROOKLYN, etc.)
+    daysBack: number;         // Date range in days (7 or 30)
+  }
+  ```
+</ParamField>
+
+## Key Functions
+
+### buildTileSource
+
+```typescript
+function buildTileSource(): TileSource
+```
+
+Builds the OpenSeadragon tile source configuration for the isometric NYC map. Returns a custom tile source object with:
+
+- **width**: 123,904 pixels
+- **height**: 100,864 pixels  
+- **tileSize**: 512 pixels
+- **minLevel/maxLevel**: Computed from DZI dimensions (8 zoom levels)
+- **getTileUrl**: Function that maps OSD zoom level and tile coordinates to WebP tile URLs
+
+<Note>
+  Tile URLs use the `/dzi/tiles_files` proxy path. In development, Vite proxies these requests; in production, Vercel rewrites handle CORS.
+</Note>
+
+See implementation at `src/App.tsx:27-42`.
+
+### placeMarkers
+
+```typescript
+const placeMarkers = useCallback(() => void, [filteredPermits, overlayOn])
+```
+
+Places permit markers on the OpenSeadragon map with the following features:
+
+- **Nuclear clear**: Removes all existing permit overlays by DOM class and ref tracking
+- **Recency fade**: Pre-computes opacity values in O(n) based on permit date (older permits are more transparent)
+- **Chunked rendering**: Adds markers in batches of 400 per frame using `requestAnimationFrame` to avoid blocking the main thread
+- **Event handlers**: Attaches mouseenter, mouseleave, and click handlers to each marker
+- **Generation tracking**: Uses `markerGenRef` to cancel stale RAF callbacks from previous renders
+
+See implementation at `src/App.tsx:468-561`.
+
+### placeHelicopters
+
+```typescript
+const placeHelicopters = useCallback((helis: HelicopterState[]) => void, [])
+```
+
+Places and animates live helicopter markers on the map:
+
+- **Smooth interpolation**: Animates helicopter movement between position updates over 12 seconds
+- **Directional rotation**: Flips helicopter emoji based on track (heading) angle
+- **Stale removal**: Removes helicopter markers that are no longer in the active set
+- **RAF animation loop**: Continuously updates positions using `requestAnimationFrame`
+
+See implementation at `src/App.tsx:383-451`.
+
+### flyToPermit
+
+```typescript
+const flyToPermit = useCallback((permit: Permit) => void, [])
+```
+
+Animates the map viewport to center on a specific permit:
+
+1. Parses latitude/longitude from the permit
+2. Converts lat/lng to image pixel coordinates using `latlngToImagePx()`
+3. Converts image coordinates to OpenSeadragon viewport coordinates
+4. Pans to the target location
+5. Zooms to level 6 (or maintains current zoom if already > 4)
+
+See implementation at `src/App.tsx:565-576`.
+
+### toggleJobType
+
+```typescript
+const toggleJobType = (jt: string) => void
+```
+
+Toggles a job type filter on/off by adding or removing it from `filters.jobTypes` Set.
+
+See implementation at `src/App.tsx:578-582`.
+
+### toggleBorough
+
+```typescript
+const toggleBorough = (b: string) => void
+```
+
+Toggles a borough filter on/off by adding or removing it from `filters.boroughs` Set.
+
+See implementation at `src/App.tsx:584-588`.
+
+### computeOpacities
+
+```typescript
+function computeOpacities(permits: Permit[]): Map<Permit, number>
+```
+
+Pre-computes opacity values for all permits in O(n) time based on recency:
+
+1. Extracts timestamps from issued_date or approved_date
+2. Finds min/max valid timestamps
+3. Maps each permit to an opacity value from 0.5 to 1.0 (older = more transparent)
+4. Returns a Map for O(1) lookup during marker rendering
+
+See implementation at `src/App.tsx:264-277`.
+
+## Sub-Components
+
+### PermitChart
+
+```typescript
+function PermitChart({ permits }: { permits: Permit[] }): JSX.Element | null
+```
+
+Displays a horizontal bar chart showing the breakdown of permits by job type:
+
+- Groups permits by `job_type` and counts occurrences
+- Sorts by count (descending) and shows top 8 types
+- Renders color-coded bars with glow effects
+- Shows total permit count at the bottom
+
+See implementation at `src/App.tsx:50-77`.
+
+### PermitDrawer
+
+```typescript
+function PermitDrawer({ 
+  permit, 
+  onClose 
+}: { 
+  permit: Permit; 
+  onClose: () => void 
+}): JSX.Element
+```
+
+Slide-out detail panel displaying comprehensive permit information:
+
+<ParamField path="permit" type="Permit" required>
+  The permit object to display
+</ParamField>
+
+<ParamField path="onClose" type="() => void" required>
+  Callback function when the drawer close button is clicked
+</ParamField>
+
+**Features:**
+- Color-coded header with job type emoji and label
+- Address and location (neighborhood, borough, zip)
+- Job description
+- Filing details (type, status, dates)
+- Estimated cost
+- Owner, contractor, and expediter information
+- BIN, BBL, and community board metadata
+- External links to DOB BIS, ZoLa, Google Maps, and Street View
+
+See implementation at `src/App.tsx:80-222`.
+
+### PermitRow
+
+```typescript
+function PermitRow({ 
+  index, 
+  style, 
+  data 
+}: ListChildComponentProps<PermitRowData>): JSX.Element
+```
+
+Virtualized list row component for the permits sidebar list (used with `react-window`):
+
+<ParamField path="index" type="number" required>
+  Row index in the virtualized list
+</ParamField>
+
+<ParamField path="style" type="React.CSSProperties" required>
+  Position styles provided by react-window
+</ParamField>
+
+<ParamField path="data" type="PermitRowData" required>
+  Shared data object containing:
+  - `sortedPermits`: Full array of sorted permits
+  - `selectedPermit`: Currently selected permit (for highlighting)
+  - `setDrawerPermit`: Function to open the detail drawer
+  - `setSelectedPermit`: Function to update selection state
+  - `flyToPermit`: Function to animate map to permit location
+</ParamField>
+
+**Features:**
+- Color-coded dot indicator matching job type
+- Job type badge and issue date
+- Formatted address
+- Highlights when selected
+- Click handler opens drawer and flies to location
+
+See implementation at `src/App.tsx:233-261`.
+
+## Effect Lifecycle
+
+### OpenSeadragon Initialization
+
+Initializes the OSD viewer on mount (`src/App.tsx:323-359`):
+
+1. Creates OpenSeadragon viewer with custom tile source
+2. Configures gesture settings (scroll to zoom, no click to zoom)
+3. Sets up navigator (mini-map) for desktop only
+4. Adds 'open' handler that:
+   - Sets `dziLoaded` to true
+   - Creates NeighborhoodLabels instance
+   - Pans to Midtown Manhattan (Empire State Building)
+   - Zooms to 3.5 (desktop) or 10 (mobile)
+5. Cleanup function destroys viewer and labels on unmount
+
+### Permit Data Fetching
+
+Fetches permit data when `filters.daysBack` changes (`src/App.tsx:362-380`):
+
+1. Calls `fetchPermits(filters.daysBack)` API
+2. Updates `permits` state on success
+3. Sets `error` state on failure
+4. Re-fetches every 5 minutes (300,000ms interval)
+5. Cleanup function clears the interval
+
+### Helicopter Live Layer
+
+Polls helicopter data every 12 seconds after map loads (`src/App.tsx:454-465`):
+
+1. Waits for `dziLoaded` to be true
+2. Calls `fetchHelicopters()` API
+3. Passes results to `placeHelicopters()`
+4. Repeats every 12 seconds
+5. Cleanup function cancels polling
+
+### Marker Rendering
+
+Re-renders markers when data or overlay state changes (`src/App.tsx:563`):
+
+1. Waits for `dziLoaded` to be true
+2. Calls `placeMarkers()` when `filteredPermits` or `overlayOn` changes
+
+### Virtual List Scrolling
+
+Scrolls the permit list to keep selected permit visible (`src/App.tsx:609-616`):
+
+1. Finds index of `selectedPermit` in `sortedPermits`
+2. Calls `listRef.current.scrollToItem(idx, 'smart')`
+
+### Marker Highlighting
+
+Highlights the selected permit marker on the map (`src/App.tsx:619-630`):
+
+1. Removes `permit-marker--selected` class from all markers
+2. Finds the marker element by key (e.g., `job-{filing_number}`)
+3. Adds `permit-marker--selected` class to the matching marker
+
+## Usage Example
+
+```tsx
+import App from './App';
+import './App.css';
+
+function Root() {
+  return <App />;
+}
+
+export default Root;
+```
+
+<Note>
+  The App component requires the following CSS files to be imported:
+  - `./App.css` - Main component styles
+  - `openseadragon` - OSD viewer styles (imported automatically)
+</Note>
+
+## Performance Optimizations
+
+1. **Chunked marker rendering**: Adds markers in batches of 400 per frame to avoid blocking the main thread
+2. **Memoized filtering**: Uses `useMemo` for `filteredPermits` and `sortedPermits` to avoid redundant computations
+3. **Pre-computed opacities**: Calculates marker opacity values in O(n) instead of O(n²)
+4. **Virtual scrolling**: Uses `react-window` to render only visible permit list rows
+5. **Dynamic list height**: Uses ResizeObserver to measure list container height for accurate virtualization
+6. **RAF animation loops**: Uses `requestAnimationFrame` for smooth helicopter and marker animations
+7. **Generation tracking**: Cancels stale RAF callbacks when filters change
+
+## Dependencies
+
+- `react` - Core React library
+- `openseadragon` - Deep zoom image viewer
+- `react-window` - Virtual scrolling for permit list
+- Custom utilities: `latlngToImagePx`, `fetchPermits`, `fetchHelicopters`, `getJobColor`, `getJobEmoji`, `getJobLabel`, `formatAddress`, `formatDate`
+- `NeighborhoodLabels` - Custom overlay manager for neighborhood labels
+
+## See Also
+
+- [NeighborhoodLabels](/api/components/neighborhood-labels) - Overlay manager for LOD neighborhood labels
+- [Permit Map](/api/components/permit-map) - MapLibre alternative map view

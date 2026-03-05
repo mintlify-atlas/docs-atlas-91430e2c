@@ -1,0 +1,312 @@
+---
+title: Permit Overlay System
+description: Real-time permit markers with chunked rendering, recency fade, and interactive tooltips
+---
+
+The permit overlay system renders thousands of permit markers on the isometric map with optimized performance through chunked rendering and visual recency encoding.
+
+## Architecture
+
+Permit markers are implemented as OpenSeadragon overlays, rendered in batches to avoid blocking the main thread.
+
+### Core Implementation
+
+```tsx
+// App.tsx:468-561
+const placeMarkers = useCallback(() => {
+  const viewer = osdRef.current;
+  if (!viewer) return;
+
+  // Nuclear clear: remove every permit overlay by DOM class
+  const allOverlayEls = viewer.element.querySelectorAll('.permit-marker');
+  allOverlayEls.forEach(el => { try { viewer.removeOverlay(el as HTMLElement); } catch {} });
+  overlayMarkersRef.current.clear();
+  if (!overlayOn || filteredPermits.length === 0) return;
+
+  // Pre-compute opacities in O(n)
+  const opacities = computeOpacities(filteredPermits);
+
+  // Build all valid marker entries first
+  const entries: Array<{
+    el: HTMLDivElement;
+    vpX: number;
+    vpY: number;
+    permit: Permit;
+    key: string;
+    opacity: number;
+  }> = [];
+
+  filteredPermits.forEach((permit, idx) => {
+    const lat = parseFloat(permit.latitude ?? '');
+    const lng = parseFloat(permit.longitude ?? '');
+    if (isNaN(lat) || isNaN(lng)) return;
+    const { x: imageX, y: imageY } = latlngToImagePx(lat, lng);
+    if (imageX < 0 || imageX > IMAGE_DIMS.width || imageY < 0 || imageY > IMAGE_DIMS.height) return;
+
+    const opacity = opacities.get(permit) ?? 1;
+    const el = document.createElement('div');
+    el.className = 'permit-marker';
+    el.style.cssText = `width:10px;height:10px;opacity:${opacity};pointer-events:auto;`;
+    el.style.setProperty('--color', getJobColor(permit.job_type ?? ''));
+
+    const key = permit.job_filing_number ? `job-${permit.job_filing_number}` : `idx-${idx}`;
+    el.dataset.key = key;
+
+    entries.push({
+      el, vpX: imageX / IMAGE_DIMS.width, vpY: imageY / IMAGE_DIMS.width,
+      permit, key, opacity,
+    });
+  });
+  
+  // ... chunked rendering follows
+}, [filteredPermits, overlayOn]);
+```
+
+## Chunked Rendering
+
+<Tip>Rendering all markers at once blocks the UI thread. The chunked system adds 400 markers per frame using `requestAnimationFrame`.</Tip>
+
+Markers are added in batches to prevent UI freezing when displaying thousands of permits:
+
+```tsx
+// App.tsx:516-560
+const CHUNK = 400;
+let i = 0;
+
+function addChunk() {
+  if (!osdRef.current || markerGenRef.current !== gen) return; // stale or destroyed
+  const end = Math.min(i + CHUNK, entries.length);
+  
+  for (; i < end; i++) {
+    const { el, vpX, vpY, permit, key, opacity } = entries[i];
+
+    // Attach listeners only once per element
+    el.addEventListener('mouseenter', (e) => {
+      const rect = (e.target as HTMLElement).getBoundingClientRect();
+      setTooltip({ permit, x: rect.left + rect.width / 2, y: rect.top });
+      el.style.opacity = '1';
+    });
+    el.addEventListener('mouseleave', () => {
+      setTooltip(null);
+      el.style.opacity = String(opacity);
+    });
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setDrawerPermit(permit);
+      setSelectedPermit(permit);
+    });
+
+    osdRef.current.addOverlay({
+      element: el,
+      location: new OpenSeadragon.Point(vpX, vpY),
+      placement: OpenSeadragon.Placement.CENTER,
+      checkResize: false,
+    });
+    overlayMarkersRef.current.set(key, el);
+  }
+  
+  if (i < entries.length) {
+    markerRafRef.current = requestAnimationFrame(addChunk);
+  } else {
+    markerRafRef.current = null;
+  }
+}
+
+markerRafRef.current = requestAnimationFrame(addChunk);
+```
+
+### Generation Tracking
+
+To prevent stale RAF callbacks from corrupting the overlay state, a generation counter invalidates old render cycles:
+
+```tsx
+// App.tsx:507-514
+// Cancel any in-flight chunk loop from a previous render
+if (markerRafRef.current !== null) {
+  cancelAnimationFrame(markerRafRef.current);
+  markerRafRef.current = null;
+}
+
+// Increment generation — stale RAF callbacks will see a mismatched gen and bail
+const gen = ++markerGenRef.current;
+```
+
+## Recency Fade System
+
+Older permits are rendered with reduced opacity to emphasize recent activity.
+
+### Opacity Calculation
+
+The `computeOpacities` function pre-computes all opacities in O(n) to avoid repeated min/max scans:
+
+```tsx
+// App.tsx:264-277
+function computeOpacities(permits: Permit[]): Map<Permit, number> {
+  const times = permits.map(p =>
+    new Date(p.issued_date ?? p.approved_date ?? '').getTime()
+  );
+  const valid = times.filter(t => !isNaN(t));
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  const map = new Map<Permit, number>();
+  permits.forEach((p, i) => {
+    const t = times[i];
+    map.set(p, isNaN(t) || max === min ? 1 : 0.5 + 0.5 * ((t - min) / (max - min)));
+  });
+  return map;
+}
+```
+
+<Note>
+Opacity ranges from 0.5 (oldest) to 1.0 (newest), creating a visual time gradient across the dataset.
+</Note>
+
+## Color Coding
+
+Each permit type has a distinct color assigned via CSS custom properties:
+
+```tsx
+// App.tsx:496
+el.style.setProperty('--color', getJobColor(permit.job_type ?? ''));
+```
+
+Colors are defined in `permits.ts:142-162`:
+
+```tsx
+export const WORK_TYPE_COLORS: Record<string, string> = {
+  NB:  '#00ff88',  // bright green      — new building
+  DM:  '#ff2222',  // red               — demolition
+  GC:  '#ff8800',  // orange            — general construction
+  PL:  '#4466ff',  // blue              — plumbing
+  ME:  '#00ccff',  // cyan              — mechanical
+  SOL: '#ffe600',  // yellow            — solar
+  SHD: '#cc44ff',  // purple            — sidewalk shed
+  SCF: '#ff44aa',  // pink              — scaffold
+  // ... 11 more types
+};
+```
+
+## Interactive Features
+
+### Hover Tooltips
+
+Markers show permit details on hover via a positioned tooltip component:
+
+```tsx
+// App.tsx:526-530
+el.addEventListener('mouseenter', (e) => {
+  const rect = (e.target as HTMLElement).getBoundingClientRect();
+  setTooltip({ permit, x: rect.left + rect.width / 2, y: rect.top });
+  el.style.opacity = '1';
+});
+```
+
+Tooltip rendering (App.tsx:788-800):
+
+```tsx
+{tooltip && (
+  <div className="tooltip" style={{ left: tooltip.x, top: tooltip.y - 8, transform: 'translate(-50%, -100%)' }}>
+    <div className="tooltip-type" style={{ color: getJobColor(tooltip.permit.job_type ?? '') }}>
+      {getJobEmoji(tooltip.permit.job_type ?? '')} {getJobLabel(tooltip.permit.job_type ?? '')}
+    </div>
+    <div className="tooltip-address">{formatAddress(tooltip.permit)}</div>
+    {tooltip.permit.owner_business_name && (
+      <div className="tooltip-owner">{tooltip.permit.owner_business_name}</div>
+    )}
+    <div className="tooltip-date">{formatDate(tooltip.permit.issued_date ?? tooltip.permit.approved_date)}</div>
+    <div className="tooltip-hint">click for details</div>
+  </div>
+)}
+```
+
+### Click Handling
+
+Clicking a marker opens the detail drawer and highlights the marker:
+
+```tsx
+// App.tsx:539-544
+el.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  setDrawerPermit(permit);
+  setSelectedPermit(permit);
+});
+```
+
+Selected markers receive a CSS class for visual emphasis (App.tsx:619-630):
+
+```tsx
+useEffect(() => {
+  // Clear previous selection
+  overlayMarkersRef.current.forEach(el => el.classList.remove('permit-marker--selected'));
+  if (!selectedPermit) return;
+  const key = selectedPermit.job_filing_number
+    ? `job-${selectedPermit.job_filing_number}`
+    : null;
+  if (key) {
+    const el = overlayMarkersRef.current.get(key);
+    if (el) el.classList.add('permit-marker--selected');
+  }
+}, [selectedPermit]);
+```
+
+## Performance Optimizations
+
+<Steps>
+  <Step title="Pre-compute Opacities">
+    Calculate all opacity values once before rendering to avoid O(n²) complexity
+  </Step>
+  <Step title="Chunked Rendering">
+    Add 400 markers per animation frame to prevent blocking the UI thread
+  </Step>
+  <Step title="Generation Tracking">
+    Cancel stale RAF callbacks when filters change to avoid race conditions
+  </Step>
+  <Step title="Event Listener Efficiency">
+    Attach listeners only once during marker creation, not on every render
+  </Step>
+  <Step title="Bounds Checking">
+    Skip markers outside the image dimensions before creating DOM elements
+  </Step>
+</Steps>
+
+## Coordinate Conversion
+
+Permits are positioned using a lat/lng to image pixel conversion:
+
+```tsx
+// App.tsx:486-490
+const lat = parseFloat(permit.latitude ?? '');
+const lng = parseFloat(permit.longitude ?? '');
+if (isNaN(lat) || isNaN(lng)) return;
+const { x: imageX, y: imageY } = latlngToImagePx(lat, lng);
+if (imageX < 0 || imageX > IMAGE_DIMS.width || imageY < 0 || imageY > IMAGE_DIMS.height) return;
+```
+
+Viewport coordinates are normalized:
+
+```tsx
+// App.tsx:502
+vpX: imageX / IMAGE_DIMS.width, vpY: imageY / IMAGE_DIMS.width
+```
+
+## Toggle Control
+
+The overlay system can be toggled on/off from the sidebar:
+
+```tsx
+// App.tsx:293, 478
+const [overlayOn, setOverlayOn] = useState(true);
+if (!overlayOn || filteredPermits.length === 0) return;
+```
+
+Button implementation (App.tsx:660-665):
+
+```tsx
+<button
+  className={`overlay-toggle ${overlayOn ? 'on' : 'off'}`}
+  onClick={() => setOverlayOn(v => !v)}
+>
+  {overlayOn ? 'ON' : 'OFF'}
+</button>
+```

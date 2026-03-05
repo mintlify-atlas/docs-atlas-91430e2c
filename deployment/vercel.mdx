@@ -1,0 +1,351 @@
+---
+title: Vercel Deployment
+description: Deploy NYC Permit Pulse to Vercel with production rewrites and custom domain
+---
+
+## Overview
+
+NYC Permit Pulse is deployed on Vercel at [permitpulse.nyc](https://permitpulse.nyc). Vercel handles:
+
+- **Static hosting** for the Vite build output
+- **Server-side rewrites** to proxy external API/tile requests
+- **Custom domain** with automatic HTTPS
+- **Instant deployment** on every git push
+
+## Vercel Configuration
+
+The production rewrite rules are defined in `vercel.json` at the project root:
+
+```json vercel.json
+{
+  "rewrites": [
+    {
+      "source": "/api/permits/:path*",
+      "destination": "https://data.cityofnewyork.us/resource/rbx6-tga4.json/:path*"
+    },
+    {
+      "source": "/api/jobs/:path*",
+      "destination": "https://data.cityofnewyork.us/resource/w9ak-ipjd.json/:path*"
+    },
+    {
+      "source": "/dzi/:path*",
+      "destination": "https://isometric-nyc-tiles.cannoneyed.com/dzi/:path*"
+    },
+    {
+      "source": "/api/adsb/:path*",
+      "destination": "https://api.adsb.lol/v2/:path*"
+    },
+    {
+      "source": "/map",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+```
+
+### How Rewrites Work
+
+<Steps>
+  <Step title="Browser makes a request">
+    The app requests `/api/permits?$where=...` from the same origin (e.g., `https://permitpulse.nyc/api/permits?$where=...`).
+  </Step>
+
+  <Step title="Vercel rewrites the path">
+    Before the request reaches the static files, Vercel's edge network checks the `rewrites` rules and transforms the URL:
+    ```
+    /api/permits?$where=... 
+      → https://data.cityofnewyork.us/resource/rbx6-tga4.json?$where=...
+    ```
+  </Step>
+
+  <Step title="Vercel proxies the request">
+    Vercel fetches the data from NYC Open Data and returns it to the browser with the original domain (`permitpulse.nyc`), avoiding CORS errors.
+  </Step>
+</Steps>
+
+<Info>
+  The `:path*` syntax captures all remaining path segments and query parameters, allowing dynamic URLs like `/api/permits?$where=issue_date>'2026-01-01'` to pass through unchanged.
+</Info>
+
+### Rewrite Rules Breakdown
+
+| Source Path | Destination | Purpose |
+|-------------|-------------|----------|
+| `/api/permits/:path*` | `https://data.cityofnewyork.us/resource/rbx6-tga4.json/:path*` | DOB NOW approved work permits (Socrata ID: `rbx6-tga4`) |
+| `/api/jobs/:path*` | `https://data.cityofnewyork.us/resource/w9ak-ipjd.json/:path*` | DOB NOW job filings for NB/DM (Socrata ID: `w9ak-ipjd`) |
+| `/dzi/:path*` | `https://isometric-nyc-tiles.cannoneyed.com/dzi/:path*` | OpenSeadragon DZI descriptor + tile images |
+| `/api/adsb/:path*` | `https://api.adsb.lol/v2/:path*` | Live helicopter tracking data |
+| `/map` | `/index.html` | SPA route fallback for `/map` path |
+| `/(.*)`  | `/index.html` | Catch-all SPA route fallback |
+
+<Warning>
+  The order of rewrites matters! Specific paths (`/api/permits`, `/dzi`) must come **before** the catch-all `/(.*)`  rule, or they'll be overridden.
+</Warning>
+
+### SPA Fallback
+
+The last two rules handle client-side routing:
+
+```json
+{
+  "source": "/map",
+  "destination": "/index.html"
+},
+{
+  "source": "/(.*)",
+  "destination": "/index.html"
+}
+```
+
+This ensures that direct navigation to any path (e.g., `permitpulse.nyc/map`) returns `index.html` instead of a 404, allowing the React app to handle routing.
+
+## Deployment Process
+
+<Steps>
+  <Step title="Connect your GitHub repository">
+    1. Go to [vercel.com/new](https://vercel.com/new)
+    2. Import your GitHub repository (e.g., `yourusername/isometric-permits`)
+    3. Vercel auto-detects the Vite framework and suggests build settings
+  </Step>
+
+  <Step title="Configure build settings">
+    Vercel should auto-detect these settings. Verify or set manually:
+    
+    - **Framework Preset**: Vite
+    - **Build Command**: `npm run build`
+    - **Output Directory**: `dist`
+    - **Install Command**: `npm install`
+    
+    These correspond to the scripts in `package.json:6-10`:
+    ```json package.json
+    "scripts": {
+      "dev": "vite",
+      "build": "tsc -b && vite build",
+      "preview": "vite preview"
+    }
+    ```
+  </Step>
+
+  <Step title="Add vercel.json to your repository">
+    Ensure `vercel.json` is committed to your repo root with the rewrite rules shown above.
+    
+    ```bash
+    git add vercel.json
+    git commit -m "Add Vercel rewrite configuration"
+    git push
+    ```
+  </Step>
+
+  <Step title="Deploy">
+    Click **Deploy**. Vercel will:
+    1. Clone your repository
+    2. Run `npm install`
+    3. Run `npm run build` (TypeScript check + Vite build)
+    4. Upload the `dist/` folder to Vercel's edge network
+    5. Apply the `vercel.json` rewrites
+    
+    You'll get a deployment URL like: `https://isometric-permits-abc123.vercel.app`
+  </Step>
+
+  <Step title="Verify the deployment">
+    1. Visit the deployment URL
+    2. Open browser DevTools → Network tab
+    3. Check that `/api/permits` requests return 200 OK with JSON data
+    4. Check that `/dzi/nyc_files/*/` tile images load correctly
+    5. Verify no CORS errors in the console
+  </Step>
+</Steps>
+
+## Custom Domain Setup
+
+To deploy on a custom domain like `permitpulse.nyc`:
+
+<Steps>
+  <Step title="Add domain in Vercel">
+    1. Go to your project settings → **Domains**
+    2. Click **Add Domain**
+    3. Enter your domain (e.g., `permitpulse.nyc`)
+  </Step>
+
+  <Step title="Configure DNS records">
+    Vercel will show you the required DNS records. For an apex domain (`permitpulse.nyc`):
+    
+    **Option A: A Record (recommended)**
+    ```
+    Type: A
+    Name: @
+    Value: 76.76.19.19
+    ```
+    
+    **Option B: CNAME (if your registrar supports apex CNAME)**
+    ```
+    Type: CNAME
+    Name: @
+    Value: cname.vercel-dns.com
+    ```
+    
+    For a subdomain (`www.permitpulse.nyc`):
+    ```
+    Type: CNAME
+    Name: www
+    Value: cname.vercel-dns.com
+    ```
+  </Step>
+
+  <Step title="Add both apex and www (optional)">
+    It's common to support both `permitpulse.nyc` and `www.permitpulse.nyc`:
+    1. Add both domains in Vercel
+    2. Set one as the **primary** (Vercel will redirect the other)
+  </Step>
+
+  <Step title="Wait for DNS propagation">
+    DNS changes can take 5 minutes to 48 hours. Check status with:
+    ```bash
+    dig permitpulse.nyc
+    ```
+    
+    You should see the Vercel IP address (76.76.19.19) in the response.
+  </Step>
+
+  <Step title="Vercel provisions SSL">
+    Once DNS is verified, Vercel automatically provisions a free SSL certificate via Let's Encrypt. Your site will be available at `https://permitpulse.nyc`.
+  </Step>
+</Steps>
+
+<Info>
+  Vercel automatically renews SSL certificates and handles HTTPS redirects. No manual configuration needed.
+</Info>
+
+## Environment Variables
+
+NYC Permit Pulse does not require environment variables — all external URLs are handled via `vercel.json` rewrites. If you fork the project and need to add secrets:
+
+<Steps>
+  <Step title="Add environment variable in Vercel dashboard">
+    Go to **Settings** → **Environment Variables** and add your key-value pairs:
+    ```
+    VITE_API_KEY=your_secret_key
+    ```
+  </Step>
+
+  <Step title="Access in code">
+    Vite exposes env vars prefixed with `VITE_`:
+    ```ts
+    const apiKey = import.meta.env.VITE_API_KEY
+    ```
+  </Step>
+
+  <Step title="Redeploy">
+    Environment variables are only injected during build. Push a new commit or manually trigger a redeploy.
+  </Step>
+</Steps>
+
+<Warning>
+  Never commit `.env` files with secrets to git. Use Vercel's environment variable UI instead.
+</Warning>
+
+## Build Logs and Debugging
+
+### View Build Logs
+
+1. Go to your Vercel project → **Deployments**
+2. Click on a deployment
+3. View the **Build Logs** tab
+
+You'll see:
+- `npm install` output
+- TypeScript compilation (`tsc -b`)
+- Vite build output
+- Any errors that caused the build to fail
+
+### Common Build Errors
+
+**TypeScript errors**
+```
+❌ error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+```
+**Fix**: Run `npm run build` locally to catch type errors before pushing.
+
+**Missing dependencies**
+```
+❌ Module not found: Can't resolve 'openseadragon'
+```
+**Fix**: Ensure `package.json` includes all dependencies. Run `npm install` and commit the updated `package-lock.json`.
+
+**Out of memory**
+```
+❌ JavaScript heap out of memory
+```
+**Fix**: Rare for this project. If it happens, configure `NODE_OPTIONS=--max_old_space_size=4096` in Vercel environment variables.
+
+### Runtime Debugging
+
+If the build succeeds but the app doesn't work:
+
+1. **Check browser console** for JavaScript errors
+2. **Check Network tab** for failed API/tile requests
+3. **Verify rewrites are applied**:
+   ```bash
+   curl -I https://permitpulse.nyc/api/permits?$limit=1
+   ```
+   Should return 200 OK with NYC Open Data headers.
+
+4. **Check Vercel logs** (real-time function logs):
+   Go to **Deployments** → **Functions** tab (shows edge function errors if any)
+
+## Continuous Deployment
+
+Vercel automatically deploys on every git push:
+
+- **Main branch** → Production deployment (`permitpulse.nyc`)
+- **Other branches** → Preview deployments (`isometric-permits-git-feature-branch.vercel.app`)
+- **Pull requests** → Preview deployments with automatic comments in the PR
+
+### Preview Deployments
+
+Every PR gets a unique preview URL:
+
+```
+https://isometric-permits-git-add-helicopter-layer.vercel.app
+```
+
+Vercel posts a comment on the PR with the preview link. This lets you test changes before merging.
+
+### Skip a Deployment
+
+To push without triggering a deployment, add `[skip ci]` to the commit message:
+
+```bash
+git commit -m "Update README [skip ci]"
+```
+
+## Deployment Checklist
+
+Before deploying to production:
+
+- [ ] Run `npm run build` locally to catch TypeScript errors
+- [ ] Run `npm run preview` and test the production build
+- [ ] Verify `vercel.json` includes all necessary rewrites
+- [ ] Commit and push `vercel.json` to the repo
+- [ ] Test API endpoints return valid data (check Network tab)
+- [ ] Test tile images load correctly (no 404s)
+- [ ] Check mobile responsiveness (DevTools device emulation)
+- [ ] Verify OpenSeadragon zoom and pan work smoothly
+
+## Production URL
+
+The official deployment is live at:
+
+**[https://permitpulse.nyc](https://permitpulse.nyc)**
+
+Source code: [github.com/ziggy2socks/isometric-permits](https://github.com/ziggy2socks/isometric-permits)
+
+## Next Steps
+
+- [Data Sources](/concepts/data-sources) — Understand NYC Open Data integration
+- [Permit Types](/concepts/permit-types) — Learn about color coding and filtering
+- [API Reference](/api/permits) — Explore core functions and types

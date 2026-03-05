@@ -1,0 +1,282 @@
+---
+title: Production Build
+description: Build and optimize NYC Permit Pulse for production deployment
+---
+
+## Overview
+
+NYC Permit Pulse uses Vite to create an optimized production build with TypeScript compilation, tree-shaking, code splitting, and minification. The output is a set of static assets ready for deployment on any static hosting platform.
+
+## Building for Production
+
+<Steps>
+  <Step title="Ensure dependencies are installed">
+    ```bash
+    npm install
+    ```
+  </Step>
+
+  <Step title="Run the build command">
+    From `package.json:8`, the build script runs TypeScript compilation followed by Vite bundling:
+    ```bash
+    npm run build
+    ```
+    
+    This executes:
+    ```json package.json
+    "build": "tsc -b && vite build"
+    ```
+    
+    You'll see output similar to:
+    ```
+    vite v7.3.1 building for production...
+    ✓ 847 modules transformed.
+    dist/index.html                   0.52 kB │ gzip:  0.33 kB
+    dist/assets/index-B2x7k9Qm.css   45.23 kB │ gzip: 12.67 kB
+    dist/assets/index-C3vR8xYz.js   512.34 kB │ gzip: 156.89 kB
+    ✓ built in 3.42s
+    ```
+  </Step>
+
+  <Step title="Verify the build output">
+    The `dist/` directory contains all production assets:
+    ```
+    dist/
+    ├── index.html
+    ├── assets/
+    │   ├── index-[hash].css
+    │   ├── index-[hash].js
+    │   └── [other chunks]
+    └── [public files]
+    ```
+  </Step>
+</Steps>
+
+## Build Process Breakdown
+
+### TypeScript Compilation
+
+The first step (`tsc -b`) performs a **project build** using TypeScript's build mode:
+
+- **Validates all types** across `src/**/*.ts` and `src/**/*.tsx` files
+- Uses strict type-checking from `tsconfig.app.json:21-26`:
+  ```json tsconfig.app.json
+  "strict": true,
+  "noUnusedLocals": true,
+  "noUnusedParameters": true,
+  "noFallthroughCasesInSwitch": true
+  ```
+- **Does not emit JavaScript** (`noEmit: true`) — Vite handles transpilation
+- **Checks both app and config** code via project references in `tsconfig.json:3-6`
+
+<Info>
+  The `-b` flag enables TypeScript's incremental build mode, which caches compilation info in `node_modules/.tmp/tsconfig.*.tsbuildinfo` for faster subsequent builds.
+</Info>
+
+### Vite Build Optimization
+
+The second step (`vite build`) bundles and optimizes the application:
+
+#### Code Splitting
+
+Vite automatically splits code into chunks:
+- **Main bundle** (`index-[hash].js`) — app logic, React, state management
+- **Vendor chunks** — large dependencies (OpenSeadragon, MapLibre GL)
+- **Dynamic imports** — lazy-loaded components (if any)
+
+#### Minification
+
+All JavaScript and CSS are minified:
+- **Terser** minifies JS (removes whitespace, mangles variable names)
+- **Lightning CSS** minifies CSS (via Tailwind)
+- **Gzip compression** is shown in build output (handled by hosting platform)
+
+#### Asset Optimization
+
+- **CSS** extracted into separate files with content hashes
+- **Content hashing** on all assets (`[hash]`) for cache busting
+- **Public files** copied to `dist/` root (if any exist in `public/`)
+
+#### Tree Shaking
+
+Unused code is eliminated:
+- **ESM imports** allow Vite to detect unused exports
+- **Dead code** from dependencies is removed
+- **React production build** removes development-only checks
+
+### Target Environment
+
+From `tsconfig.app.json:4-6`, the app targets modern browsers:
+
+```json tsconfig.app.json
+"target": "ES2022",
+"lib": ["ES2022", "DOM", "DOM.Iterable"]
+```
+
+Vite transpiles to ES2020+ syntax (native `async`/`await`, optional chaining, nullish coalescing, etc.). If you need to support older browsers, configure `build.target` in `vite.config.ts`.
+
+## Static Asset Handling
+
+### Public Directory
+
+Files in `public/` are copied to `dist/` without processing. This includes:
+- `screenshot.jpg` (shown in README)
+- Any other static assets that don't need bundling
+
+### Built-in Assets
+
+Assets imported in code are bundled with content hashes:
+
+```ts
+import ntaCentroids from './nta_centroids.json'  // Bundled into JS
+```
+
+### External Assets
+
+The app fetches these resources at runtime (not bundled):
+- **Isometric NYC tiles** — Deep-zoom DZI images from `https://isometric-nyc-tiles.cannoneyed.com`
+- **NYC Open Data** — Permit and job data from `https://data.cityofnewyork.us`
+- **ADS-B Exchange** — Helicopter tracking from `https://api.adsb.lol`
+
+<Warning>
+  These external resources require **server-side rewrites** in production to avoid CORS errors. See [CORS Considerations](#cors-considerations) below.
+</Warning>
+
+## Preview the Production Build
+
+Vite includes a preview server to test the production build locally:
+
+```bash
+npm run preview
+```
+
+This serves the `dist/` folder on [http://localhost:4173](http://localhost:4173). 
+
+<Warning>
+  The preview server **does not include the dev proxy**. You'll see CORS errors when fetching permits/tiles unless you configure production rewrites (covered in [Vercel Deployment](/deployment/vercel)).
+</Warning>
+
+## CORS Considerations
+
+The dev server's proxy configuration in `vite.config.ts:12-34` **only works in development**. For production:
+
+### Why CORS is an Issue
+
+The app runs on your domain (e.g., `permitpulse.nyc`) but needs to fetch data from:
+- `data.cityofnewyork.us` (no CORS headers for arbitrary origins)
+- `isometric-nyc-tiles.cannoneyed.com` (same issue)
+- `api.adsb.lol` (same issue)
+
+Browsers block these cross-origin requests unless the response includes `Access-Control-Allow-Origin` headers.
+
+### Solution: Server-Side Rewrites
+
+Your hosting platform must rewrite paths **on the server** before they reach the browser:
+
+```
+GET https://permitpulse.nyc/api/permits?$where=...
+  ↓ (server rewrites path)
+GET https://data.cityofnewyork.us/resource/rbx6-tga4.json?$where=...
+  ↓ (response proxied back)
+200 OK ["permit", "data", ...]
+```
+
+The browser sees a same-origin request, avoiding CORS.
+
+### Platform-Specific Configuration
+
+<CodeGroup>
+```json Vercel (vercel.json)
+{
+  "rewrites": [
+    {
+      "source": "/api/permits/:path*",
+      "destination": "https://data.cityofnewyork.us/resource/rbx6-tga4.json/:path*"
+    },
+    {
+      "source": "/api/jobs/:path*",
+      "destination": "https://data.cityofnewyork.us/resource/w9ak-ipjd.json/:path*"
+    },
+    {
+      "source": "/dzi/:path*",
+      "destination": "https://isometric-nyc-tiles.cannoneyed.com/dzi/:path*"
+    },
+    {
+      "source": "/api/adsb/:path*",
+      "destination": "https://api.adsb.lol/v2/:path*"
+    }
+  ]
+}
+```
+
+```toml Netlify (_redirects)
+/api/permits/*  https://data.cityofnewyork.us/resource/rbx6-tga4.json/:splat  200
+/api/jobs/*     https://data.cityofnewyork.us/resource/w9ak-ipjd.json/:splat  200
+/dzi/*          https://isometric-nyc-tiles.cannoneyed.com/dzi/:splat          200
+/api/adsb/*     https://api.adsb.lol/v2/:splat                                 200
+```
+
+```nginx Nginx
+location /api/permits/ {
+  proxy_pass https://data.cityofnewyork.us/resource/rbx6-tga4.json/;
+}
+location /api/jobs/ {
+  proxy_pass https://data.cityofnewyork.us/resource/w9ak-ipjd.json/;
+}
+location /dzi/ {
+  proxy_pass https://isometric-nyc-tiles.cannoneyed.com/dzi/;
+}
+location /api/adsb/ {
+  proxy_pass https://api.adsb.lol/v2/;
+}
+```
+</CodeGroup>
+
+See [Vercel Deployment](/deployment/vercel) for a complete working configuration.
+
+## Environment Variables
+
+NYC Permit Pulse **does not use environment variables**. All configuration is hard-coded:
+
+- **API endpoints** are rewritten by the hosting platform (see above)
+- **No API keys required** — NYC Open Data is fully public
+- **No build-time secrets** — everything is client-side
+
+If you fork this project and need environment variables, Vite exposes them via `import.meta.env`:
+
+```ts
+const API_URL = import.meta.env.VITE_API_URL  // Must start with VITE_
+```
+
+Define them in `.env`:
+
+```bash .env
+VITE_API_URL=https://example.com/api
+```
+
+## Build Output Analysis
+
+To analyze bundle size and dependencies:
+
+```bash
+npm run build -- --sourcemap
+```
+
+Then upload `dist/assets/*.js.map` to [bundle-buddy](https://bundle-buddy.com/) or use [vite-bundle-visualizer](https://github.com/btd/rollup-plugin-visualizer).
+
+### Current Bundle Size
+
+As of the latest build:
+- **Main JS**: ~512 KB (uncompressed) / ~157 KB (gzipped)
+- **Main CSS**: ~45 KB (uncompressed) / ~13 KB (gzipped)
+
+Largest dependencies:
+- `react` + `react-dom`: ~150 KB
+- `openseadragon`: ~200 KB
+- `maplibre-gl`: ~100 KB
+
+## Next Steps
+
+- [Deploy to Vercel](/deployment/vercel) — Configure rewrites and deploy to production
+- [Architecture](/concepts/architecture) — Learn how the system works
+- [Data Sources](/concepts/data-sources) — Understand NYC Open Data integration

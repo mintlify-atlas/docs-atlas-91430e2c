@@ -1,0 +1,344 @@
+---
+title: Live Helicopter Tracking
+description: Real-time ADS-B data overlay with smooth interpolation and directional rotation
+---
+
+The helicopter tracking system overlays live aircraft positions from ADS-B Exchange, showing up to 10 helicopters flying over NYC with smooth motion and directional indicators.
+
+## Data Source
+
+Helicopter data comes from the ADS-B Exchange API (adsb.lol), which aggregates real-time transponder data from ground-based receivers.
+
+### API Endpoint
+
+```tsx
+// helicopters.ts:31-36
+export async function fetchHelicopters(): Promise<HelicopterState[]> {
+  try {
+    const res = await fetch(
+      `/api/adsb/lat/${NYC_LAT}/lon/${NYC_LON}/dist/${DIST_NM}`,
+      { cache: 'no-store' }
+    );
+    // ...
+  }
+}
+```
+
+### Query Parameters
+
+```tsx
+// helicopters.ts:4-7
+const NYC_LAT = 40.75;
+const NYC_LON = -74.00;
+const DIST_NM = 25; // nautical miles radius
+const MAX_HELIS = 10;
+```
+
+<Note>
+The 25-nautical-mile radius covers all five boroughs plus surrounding airspace, capturing helicopters at JFK, LaGuardia, Newark, and Manhattan heliports.
+</Note>
+
+## Helicopter Type Detection
+
+The system filters for known helicopter ICAO type codes:
+
+```tsx
+// helicopters.ts:10-20
+const HELI_TYPES = new Set([
+  'H25B','H500','H60','H64','H69','H72','H76','H47',
+  'B06','B06X','B07','B212','B222','B230','B407','B412','B427','B429','B430','B47G','B47J',
+  'EC20','EC25','EC30','EC35','EC45','EC55','EC75','EC30','AS32','AS35','AS50','AS55','AS65',
+  'S300','S330','S333','S61','S64','S70','S76','S92',
+  'R22','R44','R66',
+  'AW09','AW19','AW89','AW01','AW39',
+  'MD52','MD60','MD83',
+  'EN28','EN48',
+  'K126','K135','K232',
+]);
+```
+
+This includes:
+- **B** prefix: Bell (206, 407, 412, 429, etc.)
+- **EC/AS** prefix: Airbus/Eurocopter (H125, H135, H145)
+- **S** prefix: Sikorsky (S-76, S-92, UH-60 Black Hawk)
+- **R** prefix: Robinson (R22, R44, R66)
+- **AW** prefix: AgustaWestland (AW139, AW189)
+- **MD** prefix: MD Helicopters (MD500, MD600)
+
+### Filtering Logic
+
+```tsx
+// helicopters.ts:41-46
+const helis = ac.filter(a => {
+  const t: string = (a.t ?? '').toUpperCase();
+  const isHeliType = HELI_TYPES.has(t) || t.startsWith('H');
+  const notGround = a.alt_baro !== 'ground' && typeof a.alt_baro === 'number';
+  return isHeliType && notGround && a.lat && a.lon;
+});
+```
+
+<Tip>
+Any aircraft with a type code starting with 'H' is assumed to be a helicopter, catching edge cases not in the explicit type list.
+</Tip>
+
+### Altitude Sorting
+
+Helicopters are sorted by altitude to prioritize low-flying aircraft:
+
+```tsx
+// helicopters.ts:48-50
+// Sort by altitude ascending (lowest = most interesting, closest to map)
+helis.sort((a, b) => (a.alt_baro ?? 9999) - (b.alt_baro ?? 9999));
+return helis.slice(0, MAX_HELIS).map(a => ({ ... }));
+```
+
+This ensures tourists helicopters circling at 1,000 feet appear before high-altitude medical transports at 5,000 feet.
+
+## State Interface
+
+```tsx
+// helicopters.ts:22-29
+export interface HelicopterState {
+  hex: string;
+  lat: number;
+  lon: number;
+  alt: number;       // feet
+  track: number;     // degrees (0=N, 90=E, 180=S, 270=W)
+  gs: number;        // knots ground speed
+}
+```
+
+## Smooth Interpolation System
+
+Helicopters move smoothly between position updates using linear interpolation over a 12-second window.
+
+### Position Tracking
+
+```tsx
+// App.tsx:304-305
+const heliPositionsRef = useRef<Map<string, { 
+  fromX: number; fromY: number; toX: number; toY: number; startTime: number; duration: number 
+}>>(new Map());
+```
+
+### Update Logic
+
+```tsx
+// App.tsx:389, 404-429
+const POLL_MS = 12000;
+
+helis.forEach(h => {
+  const { x: imgX, y: imgY } = latlngToImagePx(h.lat, h.lon);
+  if (imgX < 0 || imgX > IMAGE_DIMS.width || imgY < 0 || imgY > IMAGE_DIMS.height) return;
+  const toX = imgX / IMAGE_DIMS.width;
+  const toY = imgY / IMAGE_DIMS.width;
+  tracks.set(h.hex, h.track);
+
+  if (existing.has(h.hex)) {
+    const prev = positions.get(h.hex)!;
+    const t = Math.min(1, (now - prev.startTime) / prev.duration);
+    const curX = prev.fromX + (prev.toX - prev.fromX) * t;
+    const curY = prev.fromY + (prev.toY - prev.fromY) * t;
+    positions.set(h.hex, { fromX: curX, fromY: curY, toX, toY, startTime: now, duration: POLL_MS });
+    // Update rotation immediately
+    const el = existing.get(h.hex)!;
+    el.style.transform = h.track > 90 && h.track < 270 ? '' : 'scaleX(-1)';
+  } else {
+    const el = document.createElement('div');
+    el.className = 'heli-marker';
+    el.textContent = '🚁';
+    el.style.transform = h.track > 90 && h.track < 270 ? '' : 'scaleX(-1)';
+    const point = new OpenSeadragon.Point(toX, toY);
+    viewer.addOverlay({ element: el, location: point, placement: OpenSeadragon.Placement.CENTER });
+    existing.set(h.hex, el);
+    positions.set(h.hex, { fromX: toX, fromY: toY, toX, toY, startTime: now, duration: POLL_MS });
+  }
+});
+```
+
+<Steps>
+  <Step title="New Position Arrives">
+    API returns updated lat/lng every 12 seconds
+  </Step>
+  <Step title="Calculate Current Position">
+    Interpolate between previous position and new target based on elapsed time
+  </Step>
+  <Step title="Store New Target">
+    Save new position as target with current interpolated position as starting point
+  </Step>
+  <Step title="Animate via RAF">
+    RequestAnimationFrame loop continuously updates overlay position
+  </Step>
+</Steps>
+
+## RAF Animation Loop
+
+```tsx
+// App.tsx:433-450
+if (!heliActiveRef.current && existing.size > 0) {
+  heliActiveRef.current = true;
+  const animate = () => {
+    const v = osdRef.current;
+    if (!v || !heliActiveRef.current) return;
+    const now2 = performance.now();
+    existing.forEach((el, hex) => {
+      const pos = positions.get(hex);
+      if (!pos) return;
+      const progress = Math.min(1, (now2 - pos.startTime) / pos.duration);
+      const x = pos.fromX + (pos.toX - pos.fromX) * progress;
+      const y = pos.fromY + (pos.toY - pos.fromY) * progress;
+      try { v.updateOverlay(el, new OpenSeadragon.Point(x, y), OpenSeadragon.Placement.CENTER); } catch {}
+    });
+    heliRafRef.current = requestAnimationFrame(animate);
+  };
+  heliRafRef.current = requestAnimationFrame(animate);
+}
+```
+
+<Note>
+The RAF loop only starts when helicopters are present and stops when the viewer is destroyed. This prevents wasted CPU cycles when no aircraft are visible.
+</Note>
+
+## Directional Rotation
+
+Helicopter emojis are flipped horizontally based on heading to indicate direction of travel:
+
+```tsx
+// App.tsx:419, 424
+el.style.transform = h.track > 90 && h.track < 270 ? '' : 'scaleX(-1)';
+```
+
+### Rotation Logic
+
+- **Track 0°-90°**: Heading north/northeast → face right (default)
+- **Track 90°-270°**: Heading south/southwest → face left (flipped)
+- **Track 270°-360°**: Heading northwest → face right
+
+<Accordion title="Why scaleX(-1) instead of CSS rotate?">
+The helicopter emoji (🚁) naturally faces right. Using `scaleX(-1)` creates a horizontal mirror when the aircraft is heading west/south, providing a clearer directional indicator than rotation.
+
+CSS `rotate()` would require calculating exact bearing angles and dealing with upside-down text when heading south.
+</Accordion>
+
+## Polling Interval
+
+Data is fetched every 12 seconds:
+
+```tsx
+// App.tsx:454-465
+useEffect(() => {
+  if (!dziLoaded) return;
+  let cancelled = false;
+  async function poll() {
+    if (cancelled) return;
+    const helis = await fetchHelicopters();
+    if (!cancelled) placeHelicopters(helis);
+  }
+  poll();
+  const interval = setInterval(poll, 12000);
+  return () => { cancelled = true; clearInterval(interval); };
+}, [dziLoaded, placeHelicopters]);
+```
+
+<Tip>
+The 12-second interval matches the ADS-B Exchange's typical update rate for Mode-S transponders. Polling faster wouldn't yield new data and would waste API quota.
+</Tip>
+
+## Stale Aircraft Removal
+
+Helicopters that disappear from the API response (landed, out of range, or transponder off) are automatically removed:
+
+```tsx
+// App.tsx:392-400
+const activeHexes = new Set(helis.map(h => h.hex));
+existing.forEach((el, hex) => {
+  if (!activeHexes.has(hex)) {
+    try { viewer.removeOverlay(el); } catch {}
+    existing.delete(hex);
+    positions.delete(hex);
+    tracks.delete(hex);
+  }
+});
+```
+
+## Lifecycle Management
+
+### Initialization
+
+Helicopter tracking starts after the DZI loads:
+
+```tsx
+// App.tsx:454-465
+useEffect(() => {
+  if (!dziLoaded) return;
+  // ... polling logic
+}, [dziLoaded, placeHelicopters]);
+```
+
+### Cleanup
+
+RAF loop and overlays are cleaned up on unmount:
+
+```tsx
+// App.tsx:351-358
+return () => {
+  labelsRef.current?.destroy();
+  labelsRef.current = null;
+  heliActiveRef.current = false;
+  if (heliRafRef.current !== null) { cancelAnimationFrame(heliRafRef.current); heliRafRef.current = null; }
+  viewer.destroy();
+  osdRef.current = null;
+};
+```
+
+## Visual Styling
+
+Helicopter markers are styled via CSS:
+
+```css
+.heli-marker {
+  font-size: 24px;
+  cursor: default;
+  user-select: none;
+  pointer-events: none;
+  filter: drop-shadow(0 0 4px rgba(255,255,255,0.8));
+  animation: heli-pulse 2s ease-in-out infinite;
+}
+
+@keyframes heli-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+```
+
+The pulsing animation and glow effect make helicopters stand out against the permit markers.
+
+## Error Handling
+
+API failures are silently caught and return an empty array:
+
+```tsx
+// helicopters.ts:59-61
+} catch {
+  return [];
+}
+```
+
+This prevents the entire overlay system from breaking if ADS-B Exchange is down or rate-limiting requests.
+
+## Performance Characteristics
+
+<Steps>
+  <Step title="Bounded Overlays">
+    Maximum 10 helicopters prevents overlay bloat even during high air traffic
+  </Step>
+  <Step title="Single RAF Loop">
+    All helicopters share one animation frame callback instead of per-aircraft timers
+  </Step>
+  <Step title="Smart Filtering">
+    Type detection happens during API processing, not every frame
+  </Step>
+  <Step title="Conditional Activation">
+    RAF loop only runs when helicopters exist — stops automatically when airspace is clear
+  </Step>
+</Steps>

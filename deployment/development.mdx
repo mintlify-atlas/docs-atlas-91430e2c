@@ -1,0 +1,194 @@
+---
+title: Development Server
+description: Run the NYC Permit Pulse development server with hot reload and proxy configuration
+---
+
+## Overview
+
+NYC Permit Pulse uses Vite as its development server, providing instant hot module replacement (HMR) and a built-in proxy to handle CORS restrictions when fetching data from external APIs and tile servers.
+
+## Starting the Dev Server
+
+<Steps>
+  <Step title="Install dependencies">
+    If you haven't already, install all project dependencies:
+    ```bash
+    npm install
+    ```
+  </Step>
+
+  <Step title="Start the development server">
+    Run the dev script from package.json:
+    ```bash
+    npm run dev
+    ```
+    
+    The server will start on port **5177** by default:
+    ```
+    VITE v7.3.1  ready in 234 ms
+    
+    ➜  Local:   http://localhost:5177/
+    ➜  Network: use --host to expose
+    ```
+  </Step>
+
+  <Step title="Open the application">
+    Navigate to [http://localhost:5177](http://localhost:5177) in your browser. You should see the isometric NYC map with permit overlays.
+  </Step>
+</Steps>
+
+## Vite Proxy Configuration
+
+The dev server proxies all external API and tile requests to avoid CORS issues. This is configured in `vite.config.ts:10-35`.
+
+<Warning>
+  The Vite proxy **only runs in development**. For production deployments, you must configure server-side rewrites (see [Production Build](/deployment/production) and [Vercel Deployment](/deployment/vercel)).
+</Warning>
+
+### Proxy Rules
+
+Here's the complete proxy configuration from `vite.config.ts`:
+
+```ts vite.config.ts
+export default defineConfig({
+  plugins: [
+    react(),
+    tailwindcss(),
+  ],
+  server: {
+    port: 5177,
+    proxy: {
+      // Proxy NYC Open Data API to avoid CORS in dev
+      '/api/permits': {
+        target: 'https://data.cityofnewyork.us',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/permits/, '/resource/rbx6-tga4.json'),
+      },
+      '/api/jobs': {
+        target: 'https://data.cityofnewyork.us',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/jobs/, '/resource/w9ak-ipjd.json'),
+      },
+      // Proxy isometric NYC tiles (DZI xml + tile images) to avoid CORS
+      '/dzi': {
+        target: 'https://isometric-nyc-tiles.cannoneyed.com',
+        changeOrigin: true,
+      },
+      // Proxy ADS-B Exchange helicopter data
+      '/api/adsb': {
+        target: 'https://api.adsb.lol',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/adsb/, '/v2'),
+      },
+    },
+  },
+})
+```
+
+### How Proxy Paths Map
+
+Each proxy rule transforms a local request into an external API call:
+
+| Local Request | External Target | Purpose |
+|---------------|-----------------|----------|
+| `GET /api/permits?$where=...` | `https://data.cityofnewyork.us/resource/rbx6-tga4.json?$where=...` | DOB NOW approved work permits |
+| `GET /api/jobs?$where=...` | `https://data.cityofnewyork.us/resource/w9ak-ipjd.json?$where=...` | DOB NOW job filings (NB/DM) |
+| `GET /dzi/nyc.dzi` | `https://isometric-nyc-tiles.cannoneyed.com/dzi/nyc.dzi` | OpenSeadragon DZI descriptor |
+| `GET /dzi/nyc_files/12/0_0.jpg` | `https://isometric-nyc-tiles.cannoneyed.com/dzi/nyc_files/12/0_0.jpg` | Isometric NYC tile images |
+| `GET /api/adsb/lat/40.7/lon/-74.0/dist/50` | `https://api.adsb.lol/v2/lat/40.7/lon/-74.0/dist/50` | Live helicopter tracking |
+
+<Info>
+  The `changeOrigin: true` option ensures the proxy sends the correct `Host` header to the target server, which is required for these APIs to respond correctly.
+</Info>
+
+## Hot Module Replacement
+
+Vite provides instant HMR for React components. When you edit a `.tsx` or `.ts` file:
+
+1. **Vite detects the change** and recompiles only the affected module
+2. **React Fast Refresh** updates the component in-place without losing state
+3. **CSS changes** are applied instantly without a full page reload
+
+### Files with HMR
+
+- **React components** (`src/App.tsx`, `src/NeighborhoodLabels.ts`) — full state preservation
+- **CSS** (`src/App.css`) — instant style updates
+- **TypeScript utilities** (`src/permits.ts`, `src/coordinates.ts`) — component re-renders on import
+
+### When HMR Fails
+
+If you see `[vite] hmr update was blocked` or the page doesn't update:
+
+- **Manual reload**: Press `Ctrl+R` or `Cmd+R`
+- **Full restart**: Stop the dev server (`Ctrl+C`) and run `npm run dev` again
+
+## Debugging Tips
+
+<Steps>
+  <Step title="Check the browser console">
+    Open Chrome/Firefox DevTools (`F12`) and check for:
+    - **API errors**: Failed permit/tile fetches
+    - **TypeScript errors**: Type mismatches caught at runtime
+    - **React warnings**: State update issues, key prop errors
+  </Step>
+
+  <Step title="Inspect network requests">
+    Open the **Network** tab in DevTools to verify:
+    - Permit API calls return 200 OK with JSON
+    - Tile images load correctly (`.jpg` files from `/dzi/nyc_files/*`)
+    - No CORS errors (all requests should go through the proxy)
+  </Step>
+
+  <Step title="Use React DevTools">
+    Install the [React DevTools extension](https://react.dev/learn/react-developer-tools) to:
+    - Inspect component state (`permits`, `selectedPermit`, `filters`)
+    - Track re-renders and performance
+    - Debug props passed to child components
+  </Step>
+
+  <Step title="Check Vite logs">
+    The terminal running `npm run dev` shows:
+    - **Module resolution errors**: Missing imports, broken paths
+    - **TypeScript errors**: Type-check failures during build
+    - **Proxy errors**: Failed upstream requests (check target availability)
+  </Step>
+</Steps>
+
+### Common Issues
+
+**No permits appear on the map**
+- Check the browser console for API errors
+- Verify the NYC Open Data API is responding: [https://data.cityofnewyork.us/resource/rbx6-tga4.json?$limit=1](https://data.cityofnewyork.us/resource/rbx6-tga4.json?$limit=1)
+- Ensure the proxy is running (restart the dev server if needed)
+
+**Tiles don't load / blank map**
+- Verify the isometric.nyc tile server is up: [https://isometric-nyc-tiles.cannoneyed.com/dzi/nyc.dzi](https://isometric-nyc-tiles.cannoneyed.com/dzi/nyc.dzi)
+- Check DevTools Network tab for 404s on tile images
+- Restart the dev server to reset the proxy
+
+**TypeScript errors prevent startup**
+- Run `npm run lint` to see all type errors
+- Check `tsconfig.app.json:2-27` for strict type-checking rules
+- Ensure all dependencies are installed (`npm install`)
+
+## Port Configuration
+
+The dev server uses port **5177** by default (configured in `vite.config.ts:11`). To change it:
+
+```ts vite.config.ts
+server: {
+  port: 3000,  // Use a different port
+  // ...
+}
+```
+
+Or via CLI:
+
+```bash
+npm run dev -- --port 3000
+```
+
+## Next Steps
+
+- [Build for production](/deployment/production) — Create optimized static assets
+- [Deploy to Vercel](/deployment/vercel) — Configure production rewrites and custom domain

@@ -1,0 +1,329 @@
+---
+title: Installation
+description: Complete guide to setting up NYC Permit Pulse locally for development
+---
+
+This guide covers everything you need to run NYC Permit Pulse locally, including the Vite proxy configuration that handles tile serving and API requests.
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- **Node.js**: Version 18 or higher
+- **npm**, **yarn**, or **pnpm**: Package manager
+- **Git**: To clone the repository
+
+<Note>
+  NYC Permit Pulse uses **Vite 7** and **React 19** with TypeScript. The project requires a modern Node.js environment.
+</Note>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/yourusername/isometric-permits
+    cd isometric-permits
+    ```
+
+    This will create a local copy of the project in the `isometric-permits` directory.
+  </Step>
+
+  <Step title="Install dependencies">
+    <CodeGroup>
+      ```bash npm
+      npm install
+      ```
+
+      ```bash yarn
+      yarn install
+      ```
+
+      ```bash pnpm
+      pnpm install
+      ```
+    </CodeGroup>
+
+    This installs all required packages including:
+
+    - **React 19** + **React DOM** — UI framework
+    - **OpenSeadragon** — Deep-zoom tile viewer
+    - **Tailwind CSS v4** — Styling (with Vite plugin)
+    - **TypeScript** — Type safety
+    - **Vite** — Build tool and dev server
+  </Step>
+
+  <Step title="Start the development server">
+    <CodeGroup>
+      ```bash npm
+      npm run dev
+      ```
+
+      ```bash yarn
+      yarn dev
+      ```
+
+      ```bash pnpm
+      pnpm dev
+      ```
+    </CodeGroup>
+
+    Expected output:
+
+    ```
+    VITE v7.3.1  ready in 342 ms
+
+    ➜  Local:   http://localhost:5177/
+    ➜  Network: use --host to expose
+    ➜  press h + enter to show help
+    ```
+  </Step>
+
+  <Step title="Open in browser">
+    Navigate to `http://localhost:5177` to see the app running.
+
+    You should see the isometric NYC map with permit markers loading immediately.
+  </Step>
+</Steps>
+
+## Vite Proxy Configuration
+
+NYC Permit Pulse relies on **proxy routes** to avoid CORS issues when fetching tiles and API data. The proxy is configured in `vite.config.ts` and only runs during development.
+
+### Why Proxying is Required
+
+1. **Tile Server CORS**: The isometric NYC tile server (`isometric-nyc-tiles.cannoneyed.com`) is CORS-restricted to `cannoneyed.com` only. Direct requests from `localhost` are blocked.
+
+2. **NYC Open Data**: While the Socrata API is public, proxying allows us to use consistent `/api/*` paths in both dev and production.
+
+### Proxy Routes
+
+Here's the complete proxy configuration from `vite.config.ts`:
+
+```ts vite.config.ts
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig({
+  plugins: [
+    react(),
+    tailwindcss(),
+  ],
+  server: {
+    port: 5177,
+    proxy: {
+      // Proxy NYC Open Data API to avoid CORS in dev
+      '/api/permits': {
+        target: 'https://data.cityofnewyork.us',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^/api/permits/, '/resource/rbx6-tga4.json'),
+      },
+      '/api/jobs': {
+        target: 'https://data.cityofnewyork.us',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^/api/jobs/, '/resource/w9ak-ipjd.json'),
+      },
+      // Proxy isometric NYC tiles (DZI xml + tile images) to avoid CORS
+      '/dzi': {
+        target: 'https://isometric-nyc-tiles.cannoneyed.com',
+        changeOrigin: true,
+      },
+      // Proxy ADS-B Exchange helicopter data
+      '/api/adsb': {
+        target: 'https://api.adsb.lol',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^/api/adsb/, '/v2'),
+      },
+    },
+  },
+})
+```
+
+### Proxy Path Mapping
+
+| Local Path | Target | Dataset |
+|------------|--------|----------|
+| `/api/permits` | `https://data.cityofnewyork.us/resource/rbx6-tga4.json` | DOB NOW: Build – Approved Permits (work permits) |
+| `/api/jobs` | `https://data.cityofnewyork.us/resource/w9ak-ipjd.json` | DOB NOW: Build – Job Filings (NB + DM) |
+| `/dzi/*` | `https://isometric-nyc-tiles.cannoneyed.com/dzi/*` | Isometric NYC map tiles |
+| `/api/adsb` | `https://api.adsb.lol/v2` | ADS-B Exchange (helicopter tracking) |
+
+<Tip>
+  In the source code, all fetch calls use the **local proxy paths** (e.g., `/api/permits`). This ensures the same code works in both development and production.
+</Tip>
+
+### How It Works
+
+When you request `/api/permits?$limit=1000` in development:
+
+1. Vite intercepts the request
+2. Rewrites the path to `/resource/rbx6-tga4.json?$limit=1000`
+3. Forwards it to `https://data.cityofnewyork.us` with `changeOrigin: true`
+4. Returns the response to your browser as if it came from `localhost:5177`
+
+## Production Deployment
+
+The Vite proxy **only runs in development**. For production builds, you need server-side rewrites.
+
+### Vercel Configuration
+
+NYC Permit Pulse is deployed on Vercel with the following `vercel.json` configuration:
+
+```json vercel.json
+{
+  "rewrites": [
+    {
+      "source": "/api/permits/:path*",
+      "destination": "https://data.cityofnewyork.us/resource/rbx6-tga4.json/:path*"
+    },
+    {
+      "source": "/api/jobs/:path*",
+      "destination": "https://data.cityofnewyork.us/resource/w9ak-ipjd.json/:path*"
+    },
+    {
+      "source": "/dzi/:path*",
+      "destination": "https://isometric-nyc-tiles.cannoneyed.com/dzi/:path*"
+    },
+    {
+      "source": "/api/adsb/:path*",
+      "destination": "https://api.adsb.lol/v2/:path*"
+    },
+    {
+      "source": "/map",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+```
+
+These rewrites mirror the Vite proxy routes, ensuring the app works identically in production.
+
+<Warning>
+  If deploying to a platform other than Vercel (e.g., Netlify, Cloudflare Pages), you'll need to configure equivalent rewrites for `/api/*` and `/dzi/*` paths.
+</Warning>
+
+## Build for Production
+
+To create a production build:
+
+<CodeGroup>
+  ```bash npm
+  npm run build
+  ```
+
+  ```bash yarn
+  yarn build
+  ```
+
+  ```bash pnpm
+  pnpm build
+  ```
+</CodeGroup>
+
+This will:
+
+1. Run TypeScript compiler (`tsc -b`) to check types
+2. Build the app with Vite to `dist/`
+
+To preview the production build locally:
+
+<CodeGroup>
+  ```bash npm
+  npm run preview
+  ```
+
+  ```bash yarn
+  yarn preview
+  ```
+
+  ```bash pnpm
+  pnpm preview
+  ```
+</CodeGroup>
+
+<Note>
+  The preview server will **not** have the proxy configured. You'll need to deploy to Vercel (or configure local rewrites) to test API/tile requests.
+</Note>
+
+## Project Structure
+
+Once installed, your project structure will look like:
+
+```
+isometric-permits/
+├── src/
+│   ├── App.tsx              # Main app — OSD viewer, sidebar, filters, ticker, drawer
+│   ├── App.css              # All styles — dark terminal aesthetic
+│   ├── coordinates.ts       # Lat/lng → isometric pixel projection
+│   ├── permits.ts           # API fetch, normalization, color/label/emoji maps
+│   ├── types.ts             # Permit, MapConfig, FilterState interfaces
+│   ├── NeighborhoodLabels.ts # LOD neighborhood label system
+│   ├── helicopters.ts       # ADS-B helicopter tracking
+│   ├── nta_centroids.json   # 197 NYC NTA centroids (computed from NYC Open Data)
+│   └── main.tsx             # React entry point
+├── public/
+│   ├── screenshot.jpg       # OG image
+│   └── favicon.ico
+├── vite.config.ts           # Vite + React + Tailwind + proxy config
+├── vercel.json              # Production rewrites for Vercel
+├── tsconfig.json            # TypeScript configuration
+├── package.json             # Dependencies and scripts
+└── README.md                # Project overview
+```
+
+## Troubleshooting
+
+### Port Already in Use
+
+If port 5177 is already in use, you can change it in `vite.config.ts:11`:
+
+```ts
+server: {
+  port: 5178,  // or any other port
+  proxy: { ... }
+}
+```
+
+### Tiles Not Loading
+
+If the map appears blank:
+
+1. Check the browser console for CORS errors
+2. Verify the Vite dev server is running
+3. Ensure `/dzi` proxy is configured correctly
+4. Try clearing browser cache and reloading
+
+### Permits Not Loading
+
+If permit markers don't appear:
+
+1. Open browser DevTools → Network tab
+2. Look for requests to `/api/permits` and `/api/jobs`
+3. Check for 429 (rate limit) or 500 (server error) responses
+4. The NYC Open Data API occasionally has outages — try again in a few minutes
+
+<Tip>
+  The Socrata API returns a maximum of 50,000 rows per request. NYC Permit Pulse limits queries to 1,000-5,000 recent permits depending on the time range to ensure fast loading.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Learn how the coordinate projection and data pipeline work
+  </Card>
+  <Card title="Data Sources" icon="database" href="/concepts/data-sources">
+    Understand the NYC Open Data APIs and datasets
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/permits">
+    Explore core functions and TypeScript types
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/deployment/vercel">
+    Deploy your own instance
+  </Card>
+</CardGroup>
