@@ -1,0 +1,104 @@
+{
+  "projectType": "frontend",
+  "projectName": "NYC Permit Pulse",
+  "projectDescription": "Live NYC DOB permit visualization overlay for isometric.nyc with real-time filtering, color-coded markers, and interactive permit details",
+  "theme": "aspen",
+  "primaryColor": "#00ccff",
+  "lightColor": "#00e6ff",
+  "darkColor": "#0099cc",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/data-sources",
+              "concepts/coordinate-projection",
+              "concepts/permit-types"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/permit-overlay",
+              "features/filtering",
+              "features/neighborhood-labels",
+              "features/helicopter-tracking",
+              "features/permit-details"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/development",
+              "deployment/production",
+              "deployment/vercel"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Modules",
+            "pages": [
+              "api/permits",
+              "api/coordinates",
+              "api/types"
+            ]
+          },
+          {
+            "group": "Components",
+            "pages": [
+              "api/components/app",
+              "api/components/neighborhood-labels",
+              "api/components/permit-map"
+            ]
+          },
+          {
+            "group": "Data Integration",
+            "pages": [
+              "api/data/permit-data",
+              "api/data/helicopters"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Live NYC DOB permit data from NYC Open Data (updated daily)",
+    "Color-coded permit markers with recency fade visualization",
+    "Interactive filtering by permit type, borough, and date range",
+    "Coordinate projection system (lat/lng to isometric pixel conversion)",
+    "Neighborhood labels with zoom-level LOD (5 boroughs → 40 major → 197 NTAs)",
+    "Permit detail drawer with DOB BIS, ZoLa, and Google Maps integration",
+    "Live helicopter overlay via ADS-B Exchange",
+    "OpenSeadragon deep-zoom tile rendering with custom overlay system"
+  ],
+  "publicApiSurface": [
+    "fetchPermits(daysBack: number): Promise<Permit[]>",
+    "latlngToImagePx(lat: number, lng: number): { x: number; y: number }",
+    "latlngToQuadrantCoords(config: MapConfig, lat: number, lng: number): { qx: number; qy: number }",
+    "getJobColor(jobType: string): string",
+    "getJobEmoji(jobType: string): string",
+    "getJobLabel(jobType: string): string",
+    "formatAddress(permit: Permit): string",
+    "formatDate(dateStr?: string): string",
+    "workTypeToCode(workType: string): string",
+    "NeighborhoodLabels.setEnabled(val: boolean)",
+    "fetchHelicopters(): Promise<HelicopterState[]>"
+  ]
+}
