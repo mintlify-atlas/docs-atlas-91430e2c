@@ -7,21 +7,38 @@ description: 'Fetch and normalize NYC DOB permit data from Socrata Open Data API
 
 The permit data integration fetches construction permits from two NYC Department of Buildings (DOB) datasets and merges them into a unified stream. This handles both work-type permits (General Construction, Plumbing, etc.) and job-level filings (New Building, Demolition).
 
+<Note>
+**Two Implementations:** The project has two permit fetching implementations:
+- `permits.ts` - Used by the main isometric view (App component), takes `daysBack: number`
+- `permit-data.ts` - Used by the alternative map view (PermitMap component), takes explicit date strings
+
+This page documents the `permit-data.ts` module used by PermitMap. For the isometric view's implementation, see [permits.ts](/api/permits).
+</Note>
+
 ## fetchPermits()
 
-Fetches permits from the past N days by querying two DOB NOW datasets and merging the results.
+Fetches permits for a specific date range by querying two DOB NOW datasets and merging the results.
 
-```typescript src/permits.ts
-export async function fetchPermits(daysBack: number = 30): Promise<Permit[]>
+```typescript src/permit-data.ts
+export async function fetchPermits(
+  dateFrom: string,
+  dateTo: string,
+  limit: number = 2000
+): Promise<Permit[]>
 ```
 
 ### Parameters
 
-<ParamField path="daysBack" type="number" default={30}>
-  Number of days to fetch permits for. Scales API limits automatically:
-  - 1 day: 1,000 permits
-  - 7 days: 2,000 permits  
-  - 30 days: 5,000 permits (capped to keep map usable)
+<ParamField path="dateFrom" type="string" required>
+  Start date in `YYYY-MM-DD` format (e.g., `'2024-01-01'`)
+</ParamField>
+
+<ParamField path="dateTo" type="string" required>
+  End date in `YYYY-MM-DD` format (e.g., `'2024-01-07'`). Range is inclusive.
+</ParamField>
+
+<ParamField path="limit" type="number" default={2000}>
+  Maximum number of permits to fetch. Used to cap map markers for performance.
 </ParamField>
 
 ### Returns
@@ -46,7 +63,7 @@ The function queries two separate Socrata datasets:
 
 All requests use proxy paths to avoid CORS issues:
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 const PERMITS_BASE = '/api/permits';  // Proxies to data.cityofnewyork.us/resource/rbx6-tga4.json
 const JOBS_BASE = '/api/jobs';        // Proxies to data.cityofnewyork.us/resource/w9ak-ipjd.json
 ```
@@ -61,7 +78,7 @@ Vite handles these in development; Vercel rewrites handle them in production.
 
 Query strings are manually constructed using Socrata Query Language (SoQL):
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 const workQuery = [
   `$order=issued_date DESC`,
   `$limit=${limit}`,
@@ -75,7 +92,7 @@ Spaces are manually replaced with `+` for URL encoding.
 
 The function uses `getLatestDatasetDate()` to determine the actual latest available data, rather than assuming the dataset is current:
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 const latestDate = await getLatestDatasetDate();
 const cutoff = new Date(latestDate);
 cutoff.setDate(cutoff.getDate() - (daysBack - 1));
@@ -88,7 +105,7 @@ This accounts for datasets that may lag 2-3 days behind real-time.
 
 Both datasets are fetched in parallel for performance:
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 const [workRes, jobRes] = await Promise.all([
   fetch(`${PERMITS_BASE}?${workQuery}`, { cache: 'no-store' }),
   fetch(`${JOBS_BASE}?${jobQuery}`, { cache: 'no-store' }),
@@ -100,7 +117,7 @@ const [workRes, jobRes] = await Promise.all([
 Work permits and job filings have different schemas and must be normalized:
 
 **Work Permits:**
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 const workPermits = workRaw.map(p => ({
   ...p,
   job_type: workTypeToCode(p.work_type ?? ''),  // "General Construction" → "GC"
@@ -108,7 +125,7 @@ const workPermits = workRaw.map(p => ({
 ```
 
 **Job Filings:**
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 const jobPermits: Permit[] = jobRaw.map(p => ({
   ...p,
   work_type: p.job_type,                         // "New Building" / "Full Demolition"
@@ -119,7 +136,7 @@ const jobPermits: Permit[] = jobRaw.map(p => ({
 
 #### Final Merge
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 return [...workPermits, ...jobPermits];
 ```
 
@@ -153,7 +170,7 @@ console.log(`Fetched ${permits.length} permits`);
 
 ### Error Handling
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 if (!workRes.ok) throw new Error(`Permits API error: ${workRes.status}`);
 if (!jobRes.ok) throw new Error(`Jobs API error: ${jobRes.status}`);
 ```
@@ -166,7 +183,7 @@ Throws errors for non-200 responses. Calling code should handle with try/catch.
 
 Determines the actual latest available date in the permits dataset, accounting for data lag.
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 async function getLatestDatasetDate(): Promise<Date>
 ```
 
@@ -174,7 +191,7 @@ async function getLatestDatasetDate(): Promise<Date>
 
 The latest dataset date is cached for **10 minutes** to avoid redundant API calls on every filter change:
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 let _latestDateCache: { date: string; fetchedAt: number } | null = null;
 
 async function getLatestDatasetDate(): Promise<Date> {
@@ -191,7 +208,7 @@ async function getLatestDatasetDate(): Promise<Date> {
 
 Uses SoQL's `max()` aggregation function:
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 const res = await fetch(`${PERMITS_BASE}?$select=max(issued_date)`);
 const data = await res.json();
 const dateStr = data[0]?.max_issued_date ?? data[0]?.max_issued_date;
@@ -201,7 +218,7 @@ const dateStr = data[0]?.max_issued_date ?? data[0]?.max_issued_date;
 
 If the API call fails or returns no data, falls back to **2 days ago**:
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 const d = new Date();
 d.setDate(d.getDate() - 2);
 return d;
@@ -217,7 +234,7 @@ return d;
 
 Normalizes verbose work type strings to two-letter codes.
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 export function workTypeToCode(workType: string): string
 ```
 
@@ -247,7 +264,7 @@ export function workTypeToCode(workType: string): string
 
 ### Implementation
 
-```typescript src/permits.ts
+```typescript src/permit-data.ts
 export function workTypeToCode(workType: string): string {
   const wt = workType.toLowerCase();
   if (wt.includes('new building'))      return 'NB';

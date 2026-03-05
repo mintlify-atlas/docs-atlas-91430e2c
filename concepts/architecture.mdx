@@ -5,6 +5,19 @@ description: App structure, component hierarchy, state management, and data flow
 
 NYC Permit Pulse is a React + TypeScript single-page application that renders an interactive deep-zoom map with live permit overlays. The architecture is designed for performance with large datasets (5,000+ markers) and smooth pan/zoom interactions.
 
+## Two Views
+
+The application provides two different map views via path-based routing:
+
+1. **Isometric View** (`/`) - OpenSeadragon-based deep-zoom rendering of the pixel-art isometric NYC map by [@cannoneyed](https://github.com/cannoneyed)
+2. **Map View** (`/map`) - MapLibre GL-based traditional 2D slippy map with CartoDB dark tiles
+
+Both views share the same permit data sources and filtering logic but use different rendering approaches.
+
+<Note>
+The isometric view (App.tsx) is the primary interface and is described in detail on this page. For the alternative map view implementation, see [PermitMap Component](/api/components/permit-map).
+</Note>
+
 ## Tech Stack
 
 The application is built with:
@@ -13,6 +26,7 @@ The application is built with:
 - **[Vite](https://vitejs.dev/)** - Fast build tool and dev server
 - **[TypeScript](https://www.typescriptlang.org/)** - Type-safe development
 - **[OpenSeadragon](https://openseadragon.github.io/)** - Deep-zoom tile viewer for the isometric map
+- **[MapLibre GL](https://maplibre.org/)** - WebGL-based map rendering for the alternative map view
 - **[react-window](https://react-window.vercel.app/)** - Virtualized permit list for performance
 
 ## Component Structure

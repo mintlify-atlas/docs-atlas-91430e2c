@@ -248,6 +248,49 @@ export const QUADRANT_PX = 512;
 
 ---
 
+### quadrantToImagePixel()
+
+Legacy function for converting quadrant coordinates to image pixel coordinates. Most code should use `latlngToImagePx()` directly.
+
+<ParamField path="qx" type="number" required>
+  Quadrant X coordinate
+</ParamField>
+
+<ParamField path="qy" type="number" required>
+  Quadrant Y coordinate
+</ParamField>
+
+**Returns:** `{ x: number; y: number }` — Image pixel coordinates
+
+```typescript
+export function quadrantToImagePixel(
+  qx: number, 
+  qy: number
+): { x: number; y: number } {
+  return { 
+    x: qx * QUADRANT_PX, 
+    y: qy * QUADRANT_PX 
+  };
+}
+```
+
+**Example:**
+
+```typescript
+import { quadrantToImagePixel, QUADRANT_PX } from './coordinates';
+
+// Convert quadrant (10, 5) to pixel coordinates
+const { x, y } = quadrantToImagePixel(10, 5);
+// x = 10 * 512 = 5120
+// y = 5 * 512 = 2560
+```
+
+<Note>
+This is a legacy compatibility function. Modern code should use `latlngToImagePx()` directly to convert from geographic coordinates.
+</Note>
+
+---
+
 ## Complete Usage Example
 
 ```typescript
